@@ -215,7 +215,7 @@ auto t1 = std::chrono::high_resolution_clock::now();
 
 // mallob definitions:
 bool MALLOB_ACTIVE = false;
-std::string mallob_endpoint = "https://dynex.dyndns.org/dynexmallob"; // "https://mallob.dynexcoin.org"; 
+std::string mallob_endpoint = "https://dynex.dyndns.org/dynexmallob"; //"https://dynexmallob.dynexcoin.org"; //
 int JOB_ID = -1; // undefined at init; JOB_ID is set from mallob
 std::string MALLOB_NETWORK_ID;
 
@@ -561,7 +561,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 	std::string readBuffer;
 	// header:
 	list = curl_slist_append(list, "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9");
-	list = curl_slist_append(list, "Accept-Encoding: gzip, deflate, br");
+	list = curl_slist_append(list, "Accept-Encoding: *");//gzip, deflate, br"); //
 	list = curl_slist_append(list, "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8");
 	// retrieve:
 	curl = curl_easy_init();
