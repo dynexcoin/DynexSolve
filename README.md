@@ -29,3 +29,16 @@ When you run DynexSolve for the first time, you will be assigned a unique “Mal
 https://dynexcoin.org/get-dnx/#mining
 
 # Build from source
+You can build the mining software from source. To do so, clone the repository and make sure you have the following requirements:
+
+* CUDA Environment (cuda development kit, nvcc & latest drivers)
+* libcurl 
+
+You need the cryptographic library which is available from building or downloading the main Dynex daemon. For Windows operation systems you require the file "Crypto.lib", on Linux it is "LibCrypto.a". Both files are also added in this repository.
+
+Build command:
+
+```
+nvcc ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a
+```
+
