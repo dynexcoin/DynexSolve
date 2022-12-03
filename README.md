@@ -24,7 +24,7 @@ In case you are experiencing issues running the miner, you can specify a specifi
 
 ```
 dynexsolve -mining-address <WALLET ADDRESS> -no-cpu -mallob-endpoint https://dynex.dyndns.org/dynexmallob
-'''
+```
 
 Note that the miner output shows computation speed, number of chips which are simulated, etc. Information about mining rewards can be observed in your wallet. When you start the DynexSolve miner, it will by default the GPU with device ID zero (the first installed one). You can specify another GPU if you like by using the command line parameter “-deviceid <ID”. To query the installed and available devices, you can use the command line option “-devices” which will output all available GPUs of your system and the associated IDs. A list of all available commands can be retrieved with the option “-h”.
 
