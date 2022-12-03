@@ -42,3 +42,16 @@ Build command:
 nvcc ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a
 ```
 
+## Build for Ubuntu 20.0.4
+
+```
+sudo apt-get update && sudo apt-get -y upgrade;
+sudo apt install -y build-essential git cmake libboost-all-dev libcurl4-openssl-dev nvidia-cuda-toolkit;
+mkdir dynexbuild && cd dynexbuild;
+git clone https://github.com/dynexcoin/Dynex.git;
+cd Dynex && mkdir build && cd build && cmake .. && make;
+cd ../../;
+git clone https://github.com/dynexcoin/DynexSolve.git;
+cd DynexSolve && cp ../Dynex/build/src/libCrypto.a .;
+nvcc ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a;
+```
