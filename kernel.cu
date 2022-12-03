@@ -215,7 +215,7 @@ auto t1 = std::chrono::high_resolution_clock::now();
 
 // mallob definitions:
 bool MALLOB_ACTIVE = false;
-std::string mallob_endpoint = "https://dynex.dyndns.org/dynexmallob"; //"https://dynexmallob.dynexcoin.org"; //
+std::string mallob_endpoint = "https://dynexmallob.dynexcoin.org"; // "https://dynex.dyndns.org/dynexmallob"; 
 int JOB_ID = -1; // undefined at init; JOB_ID is set from mallob
 std::string MALLOB_NETWORK_ID;
 
@@ -550,7 +550,8 @@ std::string mallob_follow_url(std::string mallob_endpoint) {
 
 jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params) {
 
-    	jsonxx::Object retval;
+    jsonxx::Object retval;
+    retval.parse("{\"ERROR\":true}");
 	std::string url = mallob_endpoint + "/json_rpc.php?method="+method;
 	for (int i=0; i<params.size(); i++) url = url + "&" + params[i];
 	if (mallob_debug) std::cout << TEXT_GREEN << url << TEXT_DEFAULT << std::endl;
@@ -577,7 +578,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 		res = curl_easy_perform(curl);
         	curl_easy_cleanup(curl);
 		if(res != CURLE_OK) {
-			fprintf(stderr, "Connection to Mallob failed: %s\n", curl_easy_strerror(res));
+			std::cout << log_time() << " [MALLOB] MESSAGE: " << curl_easy_strerror(res) << std::endl;
 			retval.parse("{\"ERROR\":true}");
 		} else {
 			if (mallob_debug) std::cout << TEXT_GREEN << "returns: " << readBuffer << TEXT_DEFAULT << std::endl;
@@ -2334,7 +2335,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
         double ocompl = log(average_steps) / log(n);
         
         if (use_multi_gpu) {
-            std::cout << log_time() << TEXT_SILVER << " [GPU *] " << h_total_steps_all << " STEPS (+" << steps_performed_this_batch_all << ") | " << milliseconds / 1000 << "s | FLOPS = " << std::fixed << std::setprecision(3) << hashrate / 1000 << " kFLOPS | HR = " << std::setprecision(3) << pool_hashrate_all << " H | AVG(O)n ^ " << std::setprecision(5) << ocompl << TEXT_DEFAULT << std::endl;
+            std::cout << log_time() << TEXT_SILVER << " [GPU *] " << h_total_steps_all << " STEPS (+" << steps_performed_this_batch_all << ") | " << milliseconds / 1000 << "s | FLOPS = " << std::fixed << std::setprecision(3) << hashrate / 1000 << " kFLOPS | HR = " << std::setprecision(3) << miner_hashrate_all << " H | AVG(O)n ^ " << std::setprecision(5) << ocompl << TEXT_DEFAULT << std::endl;
         }
         
         // reset d_total_steps:
