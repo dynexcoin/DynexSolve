@@ -42,7 +42,7 @@ Build command:
 nvcc ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a
 ```
 
-## Build for Ubuntu 20.0.4
+## Example: Build for Linux Ubuntu (22.0.4, 20.0.4) with dependencies:
 
 ```
 sudo apt-get update && sudo apt-get -y upgrade;
