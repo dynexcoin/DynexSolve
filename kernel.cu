@@ -215,7 +215,7 @@ auto t1 = std::chrono::high_resolution_clock::now();
 
 // mallob definitions:
 bool MALLOB_ACTIVE = false;
-std::string mallob_endpoint = "https://dynexmallob.dynexcoin.org"; // "https://dynex.dyndns.org/dynexmallob"; 
+std::string mallob_endpoint = "https://dynex.dyndns.org/dynexmallob" ; //"https://dynexmallob.dynexcoin.org"; // "https://dynex.dyndns.org/dynexmallob"; 
 int JOB_ID = -1; // undefined at init; JOB_ID is set from mallob
 std::string MALLOB_NETWORK_ID;
 
@@ -2133,8 +2133,11 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		    std::cout << log_time() << TEXT_RED << " [INFO] ERROR: Tried to update capacity on MALLOB, returned 0" << TEXT_DEFAULT << std::endl;
 		    return false;
 		}
+		std::cout << log_time() << " [MALLOB] CAPACITY NOTIFICATION SENT" << std::endl;
         }
         /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 	int _CHIP_FROM, _CHIP_TO, CHIPS_REQUIRED;
         /// MALLOB: retrieve from-to from mallob: +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2150,7 +2153,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		}
 		_CHIP_FROM = atoi(o4.get<jsonxx::String>("CHIP_FROM").c_str());
 		_CHIP_TO = atoi(o4.get<jsonxx::String>("CHIP_TO").c_str());
-		std::cout << log_time() << " [INFO] MALLOB: we got chips " << _CHIP_FROM << " to " << _CHIP_TO << " assigned." << std::endl;
+		std::cout << log_time() << " [MALLOB] WE GOT CHIPS " << _CHIP_FROM << " TO " << _CHIP_TO << " ASSIGNED." << std::endl;
 		// did we get too many assigned?
 		if (CHIPS_REQUIRED > num_jobs_all) {
 		    std::cout << log_time() << TEXT_RED << " [INFO] TOO MANY CHIPS ASSIGNED TO ME, WANTED " << CHIPS_REQUIRED << ", WE HAVE " << num_jobs_all << std::endl;
@@ -2359,6 +2362,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	    	p5.push_back("hradj=" + std::to_string(int(pool_hashrate_all)));
 	    	p5.push_back("version=" + VERSION);
 	    	jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);
+	    	/*
 	    	if (!o5.has<jsonxx::Boolean>("ERROR")) {
 			    if (o5.get<jsonxx::Number>("RESULT")==0) {
 				std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING" << TEXT_DEFAULT << std::endl;
@@ -2368,6 +2372,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 				std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
 			    }
 	    	}
+	    	*/
 
 	    	/// MALLOB: get network stats ++++++++++++++++++++++++++++++++++++++++++
 	    	/*
