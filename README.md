@@ -20,7 +20,7 @@ Windows based systems:
 dynexsolvevs -mining-address <WALLET ADDRESS> -no-cpu
 ```
 
-In case you are experiencing issues running the miner, you can specify a specific mallob endpoint:
+In case you are experiencing issues running the miner (for example error "[JSONXX] expression 'has<T>(key)' failed"), you can specify a specific mallob endpoint:
 
 ```
 dynexsolve -mining-address <WALLET ADDRESS> -no-cpu -mallob-endpoint https://dynex.dyndns.org/dynexmallob
