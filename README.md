@@ -1,6 +1,19 @@
 # DynexSolve
 Mining software supporting algo DynexSolve
 
+# DynexSolve v.2.1.1 Release Notes
+* Much improved net hash-rate on pools
+* No more Mallob JSONXX errors
+* No more Stratum JSONXX errors
+* No more Mallob SSL errors
+* automatic re-login to pool upon disconnect, send message failure, etc.
+* Supports custom difficulty when pool mining (command option -stratum_dif XXX) - Attention: your pool needs to support custom difficulty
+* Connects to our enhanced and optimized Mallob system (the heritage mallob endpoint will be available until end of this week)
+* General security enhancements
+
+Pool operators: Custom diff must follow the following login scheme - please make sure you have set the custom diff character accordingly:
+<ADDRESS>.<PAYMENTID>+<DIFF>
+
 # Pre-compiled binaries
 The official Dynex releases contain pre-compiled binaries of DynexSolve for multiple operating Systems:
 https://github.com/dynexcoin/Dynex/releases
