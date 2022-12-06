@@ -12,7 +12,7 @@ Mining software supporting algo DynexSolve
 * General security enhancements
 
 Pool operators: Custom diff must follow the following login scheme - please make sure you have set the custom diff character accordingly:
-<ADDRESS>.<PAYMENTID>+<DIFF>
+ADDRESS.PAYMENTID+DIFF
 
 # Pre-compiled binaries
 The official Dynex releases contain pre-compiled binaries of DynexSolve for multiple operating Systems:
