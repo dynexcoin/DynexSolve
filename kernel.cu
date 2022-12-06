@@ -91,7 +91,7 @@ using namespace std;
 typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
-std::string VERSION = "2.1.0";
+std::string VERSION = "2.1.1";
 
 /// init curl:
 CURL* curl;
@@ -215,7 +215,7 @@ auto t1 = std::chrono::high_resolution_clock::now();
 
 // mallob definitions:
 bool MALLOB_ACTIVE = false;
-std::string mallob_endpoint = "https://dynex.dyndns.org/dynexmallob" ; //"https://dynexmallob.dynexcoin.org"; // "https://dynex.dyndns.org/dynexmallob"; 
+std::string mallob_endpoint = "http://192.248.185.159:8019"; //"https://dynex.dyndns.org/dynexmallob" ; //"https://dynexmallob.dynexcoin.org"; 
 int JOB_ID = -1; // undefined at init; JOB_ID is set from mallob
 std::string MALLOB_NETWORK_ID;
 
@@ -237,6 +237,7 @@ std::string STRATUM_URL        = ""; //f.e. "http://dynex-test-pool.neuropool.ne
 std::string STRATUM_PORT       = ""; //f.e. "19333";
 std::string STRATUM_PAYMENT_ID = ""; //f.e. "3683cac3c8790d2f35808c7fc11b15f56034961a4497d418f930307346ead71a";
 std::string STRATUM_PASSWORD   = ""; //f.e. "child@worker";
+int         STRATUM_DIFF       = 0;
 
 // Dynex Services:
 Dynex::dynexchip dynexchip;
@@ -510,53 +511,13 @@ bool download_file(const std::string filename) {
 // Mallob MPI command function
 // Returns json object
 ////////////////////////////////////////////////////////////////////////////////////////////////
-std::string mallob_follow_url(std::string mallob_endpoint) {
-
-	std::string retval = "";
-	std::string readBuffer;
-
-	CURLcode curl_res;
-	curl = curl_easy_init();
-	if (curl)
-	    {
-		curl_easy_setopt(curl, CURLOPT_URL, mallob_endpoint.c_str());
-		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/4.0 (compatible; MSIE 5.01; Windows NT 5.0)"); 
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-		curl_res = curl_easy_perform(curl);
-		if(curl_res != CURLE_OK)
-		  fprintf(stderr, "ERROR during mallob_follow_url: %s\n",
-		          curl_easy_strerror(curl_res));
-
-		if(CURLE_OK == curl_res) 
-		{
-		     char *url;
-		     curl_res = curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &url);
-
-		     if((CURLE_OK == curl_res) && url)
-		         retval = url;
-		         retval.pop_back(); // remove last / from url
-		}
-		curl_easy_cleanup(curl);
-	    }
-	    else
-	    {
-		printf("cURL error.\n");
-	    }
-
-    return retval;
-}
-
-jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params) {
+jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params, int timeout) {
 
     jsonxx::Object retval;
-    retval.parse("{\"ERROR\":true}");
+    retval.parse("{\"STATUS\":false}");
 	std::string url = mallob_endpoint + "/json_rpc.php?method="+method;
 	for (int i=0; i<params.size(); i++) url = url + "&" + params[i];
 	if (mallob_debug) std::cout << TEXT_GREEN << url << TEXT_DEFAULT << std::endl;
-	if (mallob_debug) std::cout << TEXT_GREEN << url.c_str() << TEXT_DEFAULT << std::endl;
-	//CURL *curl;
 	CURLcode res;
 	struct curl_slist *list = NULL; //header list
 	std::string readBuffer;
@@ -568,8 +529,8 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 	curl = curl_easy_init();
 	if(curl) {
 		curl_easy_setopt(curl, CURLOPT_URL, url.c_str() );
-        	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L); // 5s
-        	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L); // 5 s
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout); 
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout); 
 		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
 		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
@@ -578,8 +539,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 		res = curl_easy_perform(curl);
         	curl_easy_cleanup(curl);
 		if(res != CURLE_OK) {
-			std::cout << log_time() << " [MALLOB] MESSAGE: " << curl_easy_strerror(res) << std::endl;
-			retval.parse("{\"ERROR\":true}");
+			//std::cout << log_time() << " [MALLOB] INFO: " << curl_easy_strerror(res) << std::endl;
 		} else {
 			if (mallob_debug) std::cout << TEXT_GREEN << "returns: " << readBuffer << TEXT_DEFAULT << std::endl;
 			//curl_easy_cleanup(curl); // moved right after _perform
@@ -587,19 +547,19 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 			readBuffer.erase(std::remove(readBuffer.begin(), readBuffer.end(), '}'), readBuffer.end());
 			readBuffer.erase(std::remove(readBuffer.begin(), readBuffer.end(), '['), readBuffer.end());
 			readBuffer.erase(std::remove(readBuffer.begin(), readBuffer.end(), ']'), readBuffer.end());
-			readBuffer = "{" + readBuffer + "}";
+			//readBuffer = "{" + readBuffer + "}";
+			readBuffer = "{\"STATUS\":true, " + readBuffer + "}";
 			//std::cout << "=> " << readBuffer << std::endl;
 			std::istringstream input(readBuffer);
 			retval.parse(input);
-			if (mallob_debug) std::cout << TEXT_GREEN << "parsed " << retval.json() << TEXT_DEFAULT << std::endl;
+			
 		}
-        
-	} else {
-		retval.parse("{\"ERROR\":true}");
-	}
-	//curl_global_cleanup();
+    }
+    if (mallob_debug) std::cout << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
 	return retval;
 }
+
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -918,7 +878,6 @@ __device__  __forceinline__ bool lambda_contains(const int _Xk, const bool* lamb
     return lambda_bin[_Xk];
 }
 
-/* replace with restoreLambdaComplete - faster 
 __device__  void RestoreLambda(const int previousSize, job_struct& job) { // make lambda the last previousSize items
 	int diff = job.lambda_pos - previousSize; // lambda.Count - previousSize;
     if (diff > 0) {
@@ -936,10 +895,10 @@ __device__  void RestoreLambda(const int previousSize, job_struct& job) { // mak
     }
     return;
 }
-*/
 
-// replaces combo RestoreLambda:
-__device__ void RestoreLambdaComplete(const int previousSize, job_struct& job){
+
+// replaces combo RestoreLambda - cuases illegal memory access in kernel sometimes, do not use:
+/*__device__ void RestoreLambdaComplete(const int previousSize, job_struct& job){
 	
 	int diff = job.lambda_pos - previousSize;
 	if (diff < 1) return;
@@ -959,6 +918,7 @@ __device__ void RestoreLambdaComplete(const int previousSize, job_struct& job){
 	//printf("GPU ====> "); for (int i=0; i<job.lambda_pos; i++) printf("%d ",job.lambda[i]); printf("\n");
 	return;
 }
+*/
 
 
 // new_units: -----------------------------------------------------------------------------------------------------------
@@ -1071,7 +1031,7 @@ __device__ bool GetUnits(int Xk, job_struct& job, const int* d_adj_opp, const in
 
     //collision detected - restore lambda
     if (!isSat) {
-    	RestoreLambdaComplete(cnt, job);
+    	RestoreLambda(cnt, job);
         //RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
         lambda_update(job);//job = lambda_update(job);
     }
@@ -1100,7 +1060,7 @@ __device__ bool GetOppUnits(const int Xk, const bool pol, job_struct& job, const
     //printf(" [INFO] GetOppUnits checkpoint 2\n");
     //collision detected - restore lambda
     if (!isSat) {
-    	RestoreLambdaComplete(cnt, job); //job = RestoreLambda(cnt, job); 
+    	RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
         lambda_update(job); //job = lambda_update(job);
     }
     //printf(" [INFO] GetOppUnits checkpoint 3\n");
@@ -1137,7 +1097,7 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
     
         if (!isSat)
         {
-            RestoreLambdaComplete(cnt, job); //job = RestoreLambda(cnt, job); 
+            RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
             lambda_update(job); //job = lambda_update(job);
             isSat = true;
             switch (job.stage)
@@ -1177,7 +1137,7 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
                 }
                 if (!isSat)
                 {
-                    RestoreLambdaComplete(cnt, job); //job = RestoreLambda(cnt, job); 
+                    RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
                     lambda_update(job);//job = lambda_update(job);
                     isSat = true;
                     for (int k = 0; k < cnt && isSat; k++)
@@ -1194,7 +1154,7 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
 
     //collision detected - restore lambda
     if (!isSat) {
-        RestoreLambdaComplete(cnt, job); //job = RestoreLambda(cnt, job); 
+        RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
         lambda_update(job); //job = lambda_update(job);
     }
 
@@ -1872,7 +1832,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
     
     // Dynex Service start:
     dynexservice.leffom = 0;
-    if (!dynexservice.start(1, DAEMON_HOST, DAEMON_PORT, MINING_ADDRESS, 0, stratum, STRATUM_URL, STRATUM_PORT, STRATUM_PAYMENT_ID, STRATUM_PASSWORD)){ 
+    if (!dynexservice.start(1, DAEMON_HOST, DAEMON_PORT, MINING_ADDRESS, 0, stratum, STRATUM_URL, STRATUM_PORT, STRATUM_PAYMENT_ID, STRATUM_PASSWORD, STRATUM_DIFF, MALLOB_NETWORK_ID)){ 
     	std::cout << log_time() << " [ERROR] CANNOT START DYNEX SERVICE." << std::endl;
     	return false;
     }
@@ -2120,48 +2080,38 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		    /// --------------------------------------------------------------------------------------------------------------
             }
         }
-
-        /// MALLOB: update_capacity -> let mallob know how many chips I can run ++++++++++++++++++++++++++++++++++++++++++
-        if (!testing) {
-		std::vector<std::string> p3;
-		p3.push_back("network_id=" + MALLOB_NETWORK_ID);
-		p3.push_back("job_id=" + std::to_string(JOB_ID));
-		p3.push_back("capacity=" + std::to_string(num_jobs_all));
-		jsonxx::Object o3 = mallob_mpi_command("update_capacity", p3);
-		int num_updated = o3.get<jsonxx::Number>("RESULT");
-		if (num_updated == 0) {
-		    std::cout << log_time() << TEXT_RED << " [INFO] ERROR: Tried to update capacity on MALLOB, returned 0" << TEXT_DEFAULT << std::endl;
-		    return false;
-		}
-		std::cout << log_time() << " [MALLOB] CAPACITY NOTIFICATION SENT" << std::endl;
-        }
-        /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-	int _CHIP_FROM, _CHIP_TO, CHIPS_REQUIRED;
-        /// MALLOB: retrieve from-to from mallob: +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        /// MALLOB: update_capactiy_new:
+        int _CHIP_FROM, _CHIP_TO, CHIPS_REQUIRED;
         if (!testing) {
-		std::vector<std::string> p4;
-		p4.push_back("network_id=" + MALLOB_NETWORK_ID);
-		p4.push_back("version=" + VERSION);
-		jsonxx::Object o4 = mallob_mpi_command("request_fromto", p4);
-		CHIPS_REQUIRED = atoi(o4.get<jsonxx::String>("CHIPS").c_str());
-		if (CHIPS_REQUIRED == 0) {
-		    std::cout << log_time() << TEXT_RED << " [INFO] NO CHIPS REQUIRED FOR THE CURRENT JOB - PLEASE UPDATE YOUR DYNEXSOLVE VERSION" << TEXT_DEFAULT << std::endl;
-		    return false;
-		}
-		_CHIP_FROM = atoi(o4.get<jsonxx::String>("CHIP_FROM").c_str());
-		_CHIP_TO = atoi(o4.get<jsonxx::String>("CHIP_TO").c_str());
-		std::cout << log_time() << " [MALLOB] WE GOT CHIPS " << _CHIP_FROM << " TO " << _CHIP_TO << " ASSIGNED." << std::endl;
-		// did we get too many assigned?
-		if (CHIPS_REQUIRED > num_jobs_all) {
-		    std::cout << log_time() << TEXT_RED << " [INFO] TOO MANY CHIPS ASSIGNED TO ME, WANTED " << CHIPS_REQUIRED << ", WE HAVE " << num_jobs_all << std::endl;
-		    return false;
-		}
-        }
-        /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
+        	std::cout << log_time() << " [MALLOB] GETTING CHIPS..." << std::endl; fflush(stdout);
+			std::vector<std::string> p3;
+			p3.push_back("network_id=" + MALLOB_NETWORK_ID);
+			p3.push_back("job_id=" + std::to_string(JOB_ID));
+			p3.push_back("capacity=" + std::to_string(num_jobs_all));
+			p3.push_back("version=" + VERSION);
+			jsonxx::Object o3 = mallob_mpi_command("update_capacity_new", p3, 60);
+			if (o3.get<jsonxx::Boolean>("STATUS")) {
+				CHIPS_REQUIRED = atoi(o3.get<jsonxx::String>("CHIPS").c_str());
+				if (CHIPS_REQUIRED == 0) {
+				    std::cout << log_time() << TEXT_RED << " [INFO] NO CHIPS REQUIRED FOR THE CURRENT JOB - PLEASE UPDATE YOUR DYNEXSOLVE VERSION" << TEXT_DEFAULT << std::endl;
+				    return false;
+				}
+				_CHIP_FROM = atoi(o3.get<jsonxx::String>("CHIP_FROM").c_str());
+				_CHIP_TO = atoi(o3.get<jsonxx::String>("CHIP_TO").c_str());
+				std::cout << log_time() << " [MALLOB] WE GOT CHIPS " << _CHIP_FROM << " TO " << _CHIP_TO << " ASSIGNED." << std::endl;
+				// did we get too many assigned?
+				if (CHIPS_REQUIRED > num_jobs_all) {
+				    std::cout << log_time() << TEXT_RED << " [INFO] TOO MANY CHIPS ASSIGNED TO ME, WANTED " << CHIPS_REQUIRED << ", WE HAVE " << num_jobs_all << std::endl;
+				    return false;
+				}
+	        } else {
+	        	std::cout << log_time() << TEXT_RED << " [ERROR] CANNOT RETRIEVE CHIPS" << TEXT_DEFAULT << std::endl;
+				return false;
+	        }
+    	}
+        ///
+    
         if (testing) {
             _CHIP_FROM = 0;
             _CHIP_TO = num_jobs_all;
@@ -2242,13 +2192,15 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
         p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
         p5.push_back("steps=" + std::to_string(h_total_steps_all));
         p5.push_back("version=" + VERSION);
-        jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);
-        if (o5.get<jsonxx::Number>("RESULT") == 0) { 
-        	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
-        	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;  
-        	return false; 
-        }
-        std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+        jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5, 1);
+        if (o5.get<jsonxx::Boolean>("STATUS")) {
+	        if (o5.get<jsonxx::Number>("RESULT") == 0) { 
+	        	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
+	        	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;  
+	        	return false; 
+	        }
+	        std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+	    }
     }
     /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     
@@ -2361,30 +2313,10 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	    	p5.push_back("hr=" + std::to_string(int(hashrate / 1000)));
 	    	p5.push_back("hradj=" + std::to_string(int(pool_hashrate_all)));
 	    	p5.push_back("version=" + VERSION);
-	    	jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);
-	    	/*
-	    	if (!o5.has<jsonxx::Boolean>("ERROR")) {
-			    if (o5.get<jsonxx::Number>("RESULT")==0) {
-				std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING" << TEXT_DEFAULT << std::endl;
-				return false;
-			    }
-			    else {
-				std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
-			    }
+	    	jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5, 1);
+	    	if (o5.get<jsonxx::Boolean>("STATUS")) {
+				    std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
 	    	}
-	    	*/
-
-	    	/// MALLOB: get network stats ++++++++++++++++++++++++++++++++++++++++++
-	    	/*
-			std::vector<std::string> ps;
-			jsonxx::Object os = mallob_mpi_command("get_status", ps);
-			if (!os.has<jsonxx::Boolean>("ERROR")) {
-				std::string network_hr = os.get<jsonxx::String>("HR");
-				std::string network_hr_adj = os.get<jsonxx::String>("HR_ADJ");
-				std::cout << log_time() << " [MALLOB] INFO: NETWORK FLOPS = " << network_hr << " kFLOPS | NETWORK HR = " << network_hr_adj << " H" << std::endl;
-			}
-		*/
-	    	/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         }
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2399,7 +2331,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		*/
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 	
-	    uint64_cu leffom = miner_hashrate_all; 
+	    uint64_cu leffom = miner_hashrate_all + miner_hashrate_all; 
 		leffom = leffom / miner_milliseconds_all * (milliseconds / 1000) * 60; 
 		if (!testing) dynexservice.leffom += leffom; 
 	    /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2505,13 +2437,15 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
             p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
             p5.push_back("steps=" + std::to_string(h_total_steps_all));
             p5.push_back("hr=0");
-            jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);
-            if (o5.get<jsonxx::Number>("RESULT") == 0) { 
-            	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl; 
-            	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;
-            	return false; 
-            }
-            std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+            jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5, 1);
+            if (o5.get<jsonxx::Boolean>("STATUS")) {
+	            if (o5.get<jsonxx::Number>("RESULT") == 0) { 
+	            	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl; 
+	            	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;
+	            	return false; 
+	            }
+	            std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+        	}
             /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
             /// save state to disk: +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2549,13 +2483,15 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
             std::vector<std::string> p5;
             p5.push_back("network_id=" + MALLOB_NETWORK_ID);
             p5.push_back("atomic_status=" + std::to_string(ATOMIC_STATUS_FINISHED_UNKNOWN));
-            jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);
-            if (o5.get<jsonxx::Number>("RESULT") == 0) { 
-            	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl; 
-            	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;
-            	return false; 
-            }
-            std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+            jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5, 60);
+            if (o5.get<jsonxx::Boolean>("STATUS")) {
+	            if (o5.get<jsonxx::Number>("RESULT") == 0) { 
+	            	std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl; 
+	            	std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;
+	            	return false; 
+	            }
+	            std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
+        	}
             /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         }
         /// save state to disk: +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2615,8 +2551,10 @@ void signalHandler( int signum ) {
 	std::vector<std::string> p5;
 	p5.push_back("network_id="+MALLOB_NETWORK_ID);
 	p5.push_back("atomic_status="+std::to_string(ATOMIC_STATUS_INTERRUPTED));
-	jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5);	    
-	std::cout << log_time() << TEXT_SILVER << " [INFO] MALLOB: ATOMIC JOB UPDATED." << TEXT_DEFAULT << std::endl;
+	jsonxx::Object o5 = mallob_mpi_command("update_job_atomic", p5, 60);	  
+	if (o5.get<jsonxx::Boolean>("STATUS")) {  
+		std::cout << log_time() << TEXT_SILVER << " [INFO] MALLOB: ATOMIC JOB UPDATED." << TEXT_DEFAULT << std::endl;
+	}
 	/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
    }
    
@@ -2653,6 +2591,7 @@ int main(int argc, char** argv) {
         std::cout << "-stratum-port <PORT>             port of the Stratum pool" << std::endl;
         std::cout << "-stratum-paymentid <PAYMENT ID>  payment ID to add to wallet address" << std::endl;
         std::cout << "-stratum-password <PASSWORD>     Stratum password (f.e. child@worker1)" << std::endl;
+        std::cout << "-stratum-diff <DIFFICULTY>       Stratum difficulty" << std::endl;
         
         std::cout << "-no-cpu                          run no Dynex chips on CPU" << std::endl;
         std::cout << "-no-gpu                          run no Dynex chips on GPU (WARNING: MINING NOT POSSIBLE)" << std::endl;
@@ -2714,7 +2653,12 @@ int main(int argc, char** argv) {
         STRATUM_PASSWORD = spass;
         std::cout << log_time() << " [INFO] STRATUM PASSWORD SET TO " << STRATUM_PASSWORD << std::endl;
     }
-    
+
+    char* sdiff = getCmdOption(argv, argv + argc, "-stratum-diff");
+    if (sdiff) {
+        STRATUM_DIFF = atoi(sdiff);
+        std::cout << log_time() << " [INFO] STRATUM DIFF SET TO " << STRATUM_DIFF << std::endl;
+    }
     
     //mining-address
     char* ma = getCmdOption(argv, argv + argc, "-mining-address");
@@ -2917,24 +2861,6 @@ int main(int argc, char** argv) {
     for (int i = 0; i < nDevices; i++) CHIP_TO[i] = 0;
     num_jobs = (int*)calloc((size_t)nDevices, sizeof(int));
     
-    /// update mallob_endpoint (permanent redirect)
-    if (!testing) {
-	    std::cout << log_time() << " [INFO] CONNECTING TO DYNEX MALLOB ENDPOINT " << mallob_endpoint << "..."; fflush(stdout);
-	    //mallob_endpoint = mallob_follow_url(mallob_endpoint); //get redirect url
-	    std::cout << " OK" << std::endl;
-	}
-    ////
-    
-    /// MALLOB: get network stats ++++++++++++++++++++++++++++++++++++++++++
-	if (!testing) {
-	    std::vector<std::string> ps;
-	    jsonxx::Object os = mallob_mpi_command("get_status", ps);
-	    std::string network_hr = os.get<jsonxx::String>("HR");
-	    std::string network_hr_adj = os.get<jsonxx::String>("HR_ADJ");
-	    std::cout << log_time() << " [MALLOB] INFO: NETWORK FLOPS = " << network_hr << " kFLOPS | HR = " << network_hr_adj << " H" << std::endl;
-	}
-    /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    
     // Check if we have unfinished local state: ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     bool work_in_progress=false;
     std::string FN; FN = "GPU_" + std::to_string(device_id) + ".bin";
@@ -2961,17 +2887,22 @@ int main(int argc, char** argv) {
 	    if (!testing) {
 		    std::vector<std::string> p6;
 		    p6.push_back("network_id="+MALLOB_NETWORK_ID);
-		    jsonxx::Object o6 = mallob_mpi_command("validate_job", p6);	 
-		    if (o6.has<jsonxx::Boolean>("RESULT")) {   
-			    if (!o6.get<jsonxx::Boolean>("RESULT")) {
-				    std::cout << log_time() << TEXT_RED << " [MALLOB] JOB ALREADY ENDED, WE FIND NEW WORK" << TEXT_DEFAULT << std::endl; 
-			    } else {
-				    std::cout << log_time() << TEXT_SILVER << " [MALLOB] JOB IS STILL VALID, WE WILL CONTINUE WORKING ON IT..." << TEXT_DEFAULT << std::endl;
-				    work_in_progress = true;
-			    }
+		    jsonxx::Object o6 = mallob_mpi_command("validate_job", p6, 60);	 
+		    if (o6.get<jsonxx::Boolean>("STATUS")) {
+			    if (o6.has<jsonxx::Boolean>("RESULT")) {   
+				    if (!o6.get<jsonxx::Boolean>("RESULT")) {
+					    std::cout << log_time() << TEXT_RED << " [MALLOB] JOB ALREADY ENDED, WE FIND NEW WORK" << TEXT_DEFAULT << std::endl; 
+				    } else {
+					    std::cout << log_time() << TEXT_SILVER << " [MALLOB] JOB IS STILL VALID, WE WILL CONTINUE WORKING ON IT..." << TEXT_DEFAULT << std::endl;
+					    work_in_progress = true;
+				    }
+				} else {
+					std::cout << log_time() << TEXT_RED << " [MALLOB] ERROR - YOU HAVE CURRENT WORK, BUT THIS EXPIRED. PLEASE DELETE ALL GPU_x.bin FILES" << TEXT_DEFAULT << std::endl;
+					return EXIT_FAILURE;
+				}
 			} else {
-				std::cout << log_time() << TEXT_RED << " [MALLOB] ERROR - YOU HAVE CURRENT WORK, BUT THIS EXPIRED. PLEASE DELETE ALL GPU_x.bin FILES" << TEXT_DEFAULT << std::endl;
-				return EXIT_FAILURE;
+				std::cout << log_time() << TEXT_RED << " [MALLOB] ERROR - CANNOT VALIDATE CURRENT WORK" << TEXT_DEFAULT << std::endl;
+					return EXIT_FAILURE;
 			}
 	    }
 	    /// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2996,38 +2927,48 @@ int main(int argc, char** argv) {
 	    if (!testing) {
 		    std::vector<std::string> p1;
 		    p1.push_back("network_id="+MALLOB_NETWORK_ID); 
-		    jsonxx::Object o1 = mallob_mpi_command("register_as_worker", p1);
-		    bool r1 = o1.get<jsonxx::Boolean>("RESULT");
-		    if (!r1) {
-				std::cout << log_time() << TEXT_RED << " [MALLOB] REGISTERED AS NEW WORKER FAILED." << TEXT_DEFAULT << std::endl;
+		    jsonxx::Object o1 = mallob_mpi_command("register_as_worker", p1, 60);
+		    if (o1.get<jsonxx::Boolean>("STATUS")) {
+			    bool r1 = o1.get<jsonxx::Boolean>("RESULT");
+			    if (!r1) {
+					std::cout << log_time() << TEXT_RED << " [MALLOB] REGISTER AS NEW WORKER FAILED." << TEXT_DEFAULT << std::endl;
+					return EXIT_FAILURE;
+			    }
+			    std::cout << log_time() << TEXT_SILVER << " [MALLOB] REGISTER AS NEW WORKER: SUCCESS." << TEXT_DEFAULT << std::endl;
+			    MALLOB_ACTIVE = true;
+			} else {
+				std::cout << log_time() << TEXT_RED << " [MALLOB] REGISTER AS NEW WORKER FAILED." << TEXT_DEFAULT << std::endl;
 				return EXIT_FAILURE;
-		    }
-		    std::cout << log_time() << TEXT_SILVER << " [MALLOB] REGISTERED AS NEW WORKER: SUCCESS." << TEXT_DEFAULT << std::endl;
-		    MALLOB_ACTIVE = true;
+			}
 		    
 		    // get work:
 		    std::vector<std::string> p2;
-		    jsonxx::Object o2 = mallob_mpi_command("get_work", p2);
-		    JOB_ID = atoi(o2.get<jsonxx::String>("JOB_ID").c_str());
-		    int CHIPS_AVAILABLE = atoi(o2.get<jsonxx::String>("CHIPS_AVAILABLE").c_str());
-		    int CHIPS_REQUIRED = atoi(o2.get<jsonxx::String>("CHIPS_REQUIRED").c_str());
-		    JOB_FILENAME = o2.get<jsonxx::String>("JOB_FILENAME"); //JOB_FILENAME = DATA_DIR+"/"+JOB_FILENAME;
-		    double JOB_FEE = atof(o2.get<jsonxx::String>("JOB_FEE").c_str());
-		    double JOB_SOLUTION_REWARD = atof(o2.get<jsonxx::String>("JOB_SOLUTION_REWARD").c_str());
-		    std::cout << log_time() << TEXT_SILVER;
-		    std::cout << " [MALLOB] JOB RECEIVED" << std::endl;
-		    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB_ID              : " << JOB_ID << std::endl;
-		    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] CHIPS AVAILABLE     : " << CHIPS_AVAILABLE << "/" << CHIPS_REQUIRED << std::endl;
-		    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB FILENAME        : " << JOB_FILENAME << std::endl;
-		    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB FEE             : BLOCK REWARD + " << JOB_FEE <<  " DNX" << std::endl;
-		    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB SOLUTION REWARD : " << JOB_SOLUTION_REWARD <<  " DNX" << std::endl;
-		    std::cout << TEXT_DEFAULT;
-		    
-		    // double check; chips also available?
-		    if (CHIPS_AVAILABLE==0) {
-		    	std::cout << log_time() << TEXT_RED << " [MALLOB] NO JOBS AVAILABLE" << TEXT_DEFAULT << std::endl;
-		    	return EXIT_FAILURE;
-		    }    
+		    jsonxx::Object o2 = mallob_mpi_command("get_work", p2, 60);
+		    if (o2.get<jsonxx::Boolean>("STATUS")) {
+			    JOB_ID = atoi(o2.get<jsonxx::String>("JOB_ID").c_str());
+			    int CHIPS_AVAILABLE = atoi(o2.get<jsonxx::String>("CHIPS_AVAILABLE").c_str());
+			    int CHIPS_REQUIRED = atoi(o2.get<jsonxx::String>("CHIPS_REQUIRED").c_str());
+			    JOB_FILENAME = o2.get<jsonxx::String>("JOB_FILENAME"); //JOB_FILENAME = DATA_DIR+"/"+JOB_FILENAME;
+			    double JOB_FEE = atof(o2.get<jsonxx::String>("JOB_FEE").c_str());
+			    double JOB_SOLUTION_REWARD = atof(o2.get<jsonxx::String>("JOB_SOLUTION_REWARD").c_str());
+			    std::cout << log_time() << TEXT_SILVER;
+			    std::cout << " [MALLOB] JOB RECEIVED" << std::endl;
+			    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB_ID              : " << JOB_ID << std::endl;
+			    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] CHIPS AVAILABLE     : " << CHIPS_AVAILABLE << "/" << CHIPS_REQUIRED << std::endl;
+			    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB FILENAME        : " << JOB_FILENAME << std::endl;
+			    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB FEE             : BLOCK REWARD + " << JOB_FEE <<  " DNX" << std::endl;
+			    std::cout << TEXT_DEFAULT << log_time() << TEXT_SILVER << " [MALLOB] JOB SOLUTION REWARD : " << JOB_SOLUTION_REWARD <<  " DNX" << std::endl;
+			    std::cout << TEXT_DEFAULT;
+			    
+			    // double check; chips also available?
+			    if (CHIPS_AVAILABLE==0) {
+			    	std::cout << log_time() << TEXT_RED << " [MALLOB] NO JOBS AVAILABLE" << TEXT_DEFAULT << std::endl;
+			    	return EXIT_FAILURE;
+			    }    
+			} else {
+				std::cout << log_time() << TEXT_RED << " [MALLOB] GET WORK FAILED." << TEXT_DEFAULT << std::endl;
+				return EXIT_FAILURE;
+			}
 	    }
 	    
 	

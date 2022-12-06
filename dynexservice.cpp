@@ -77,10 +77,12 @@ static std::string H_STRATUM_URL = "";
 static std::string H_STRATUM_PORT = "";
 static std::string H_STRATUM_PAYMENT_ID = "";
 static std::string H_STRATUM_PASSWORD = "";
+static int         H_STRATUM_DIFF = 0;
 static std::string H_POW = "";
 static stlplus::TCP_client stratumclient;
 static int accepted_cnt = 0;
 static int rejected_cnt = 0;
+static std::string H_MALLOB_NETWORK_ID = "";
 
 // Dynex colors
 #ifdef WIN32
@@ -392,7 +394,7 @@ class dynex_hasher_thread_obj {
 			std::vector<std::string> params;
 			jsonxx::Object retval;
 			std::string url = "http://" + daemon_host + ":" + daemon_port + "/json_rpc";
-			std::string postfields = "{\"jsonrpc\":\"2.0\",\"method\":\"submitblock\",\"params\":[\""+blockdata+"\"]}";
+			std::string postfields = "{\"jsonrpc\":\"2.0\",\"method\":\"submitblock\",\"params\":[\""+blockdata+"\"],\"mallob\":\""+H_MALLOB_NETWORK_ID+"\"}";
 			CURLcode res;
 			std::string readBuffer;
 			curl = curl_easy_init();
@@ -424,8 +426,13 @@ class dynex_hasher_thread_obj {
 		// Stratum: login ----------------------------------------------------------------------------------------------
 		bool stratum_login() {
 			std::cout << log_time() << " [STRATUM] CONNECTING TO " << H_STRATUM_URL << ":" << H_STRATUM_PORT << std::endl;
-			//stlplus::TCP_client client(STRATUM_URL.c_str(),(unsigned short)atoi(STRATUM_PORT.c_str()), 10000000);
-			stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
+			
+			// reconnect properly:
+			stratumclient.close();
+			stlplus::TCP_client client(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()), 10000000);
+			stratumclient = client;
+			//stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
+			
 			if (!stratumclient.initialised())
 			    {
 			      std::cout << log_time() << " [STRATUM] client failed to initialise" << std::endl;
@@ -438,7 +445,17 @@ class dynex_hasher_thread_obj {
 			    }
 			
 			std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
-			std::string COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+
+			std::string COMMAND_LOGIN;
+			if (H_STRATUM_DIFF==0) {
+					COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+			} else {
+				  // set custom diff
+					COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+ "."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					std::cout << "DEBUG: " << COMMAND_LOGIN << std::endl;
+			}
+
+			//std::string COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
 			//std::cout << COMMAND_LOGIN << std::endl;
 			if (!stratumclient.send(COMMAND_LOGIN))
 			  {
@@ -454,20 +471,26 @@ class dynex_hasher_thread_obj {
 					  return false;
 				}
 				else {
-				  	jsonxx::Object retval_json;
-					retval_json.parse(returned);
-					
-					if (retval_json.has<jsonxx::Object>("result")) {
-						jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
-						jsonxx::Object job = retval_result.get<jsonxx::Object>("job");
-						H_STRATUM_JOB_ID = job.get<jsonxx::String>("job_id");
-						H_STRATUM_ID = job.get<jsonxx::String>("id");
-						H_STRATUM_BLOB = job.get<jsonxx::String>("blob");
-						H_STRATUM_TARGET = job.get<jsonxx::String>("target");
-						stratum_connected = true;
-					  	std::cout << log_time() << " [STRATUM] CONNECTED WITH ID " << H_STRATUM_ID << std::endl;
-					} else {
-						std::cout << log_time() << " [STRATUM] COULD NOT AUTHORIZE: " << returned << std::endl;
+					if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
+						try {
+							  	jsonxx::Object retval_json;
+									retval_json.parse(returned);
+									
+									if (retval_json.has<jsonxx::Object>("result")) {
+										jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
+										jsonxx::Object job = retval_result.get<jsonxx::Object>("job");
+										H_STRATUM_JOB_ID = job.get<jsonxx::String>("job_id");
+										H_STRATUM_ID = job.get<jsonxx::String>("id");
+										H_STRATUM_BLOB = job.get<jsonxx::String>("blob");
+										H_STRATUM_TARGET = job.get<jsonxx::String>("target");
+										stratum_connected = true;
+									  	std::cout << log_time() << " [STRATUM] CONNECTED WITH ID " << H_STRATUM_ID << std::endl;
+									} else {
+										std::cout << log_time() << " [STRATUM] COULD NOT AUTHORIZE: " << returned << std::endl;
+									}
+						} catch (...) {
+							  	//e
+						}
 					}
 				}
 			}
@@ -481,7 +504,6 @@ class dynex_hasher_thread_obj {
 			if (!stratumclient.initialised())
 			      {
 				std::cout << log_time() << " [STRATUM] connection has closed, reconnecting..." << std::endl;
-				stratumclient.close();
 				stratum_login();
 			      }
 			
@@ -490,30 +512,40 @@ class dynex_hasher_thread_obj {
 			if (!stratumclient.send(COMMAND_GETJOB))
 			  {
 			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_GETJOB << std::endl;
+			    ///// RECONNECT TO POOL:
+			    stratum_login();
+			    ///// ---
 			    return false;
 			  }
 			  
 		        while (stratumclient.receive_ready(2000000))
 			{
-				std::string returned;
+				std::string returned = "";
 				if (!stratumclient.receive(returned)) {
 				  std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
 				  return false;
 				}
 				else {
-				  	jsonxx::Object retval_json;
-					retval_json.parse(returned);
-					
-					if (retval_json.has<jsonxx::Object>("result")) {
-						jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
-						H_STRATUM_JOB_ID = retval_result.get<jsonxx::String>("job_id");
-						H_STRATUM_ID = retval_result.get<jsonxx::String>("id");
-						H_STRATUM_BLOB = retval_result.get<jsonxx::String>("blob");
-						H_STRATUM_TARGET = retval_result.get<jsonxx::String>("target");
-					  	//std::cout << log_time() << " [STRATUM] RETRIEVED JOB UPDATE JOB_ID = " << H_STRATUM_JOB_ID << std::endl;
-					} else {
-						//std::cout << log_time() << " [STRATUM] COULD NOT RETRIEVE JOB UPDATE: " << returned << std::endl;
-					}
+						//std::cout << "DEBUG: getjob: " << returned << std::endl;
+					  if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
+					  	  try {
+								  	jsonxx::Object retval_json;
+									  retval_json.parse(returned);
+									
+									  if (retval_json.has<jsonxx::Object>("result")) {
+												jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
+												H_STRATUM_JOB_ID = retval_result.get<jsonxx::String>("job_id");
+												H_STRATUM_ID = retval_result.get<jsonxx::String>("id");
+												H_STRATUM_BLOB = retval_result.get<jsonxx::String>("blob");
+												H_STRATUM_TARGET = retval_result.get<jsonxx::String>("target");
+											  //std::cout << log_time() << " [STRATUM] RETRIEVED JOB UPDATE JOB_ID = " << H_STRATUM_JOB_ID << std::endl;
+									  } else {
+											  //std::cout << log_time() << " [STRATUM] COULD NOT RETRIEVE JOB UPDATE: " << returned << std::endl;
+									  }
+							  } catch (...) {
+							  	//e
+							  }
+					  }
 				}
 			}
 			return true;
@@ -525,16 +557,20 @@ class dynex_hasher_thread_obj {
 			if (!stratumclient.initialised())
 			      {
 				std::cout << log_time() << " [STRATUM] connection has closed, reconnecting..." << std::endl;
-				stratumclient.close();
 				stratum_login();
 			      }
 			
 			// get job info:
-			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve\"}}\n";
+			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve\",\"mallob\":\""+H_MALLOB_NETWORK_ID+"\"}}\n";
 			//std::cout << COMMAND_SUBMIT << std::endl;
 			if (!stratumclient.send(COMMAND_SUBMIT))
 			  {
 			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_SUBMIT << std::endl;
+			    
+			    ///// RECONNECT TO POOL:
+			    stratum_login();
+			    ///// ---
+
 			    return false;
 			  }
 			  
@@ -546,26 +582,35 @@ class dynex_hasher_thread_obj {
 				  return false;
 				}
 				else {
-					jsonxx::Object retval_json;
-                                        retval_json.parse(returned);
-                			if (retval_json.has<jsonxx::Object>("result")) {
-						int l = returned.size() - 2;
-						returned.erase(l);
-				  		//std::cout << log_time() << " [STRATUM] SHARE SUBMITTED. RESPONSE FROM POOL: \"" << returned << "\"" << std::endl;
-						accepted_cnt++;
-						std::cout << log_time() << TEXT_GREEN << " [STRATUM] SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
+					if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
+						try {
+								//std::cout << "DEBUG: submitsolution: " << returned << std::endl;
+								jsonxx::Object retval_json;
+		            retval_json.parse(returned);
+		            if (retval_json.has<jsonxx::Object>("result")) {
+											int l = returned.size() - 2;
+											returned.erase(l);
+									  		//std::cout << log_time() << " [STRATUM] SHARE SUBMITTED. RESPONSE FROM POOL: \"" << returned << "\"" << std::endl;
+											accepted_cnt++;
+											std::cout << log_time() << TEXT_GREEN << " [STRATUM] SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
 
-					} else {
-						// really rejected? or just a job-update message
-						if (!retval_json.has<jsonxx::Object>("params")) {
-							rejected_cnt++;
-							int l = returned.size() - 2;
-							returned.erase(l);
-							std::cout << log_time() << TEXT_RED << " [STRATUM] SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON " << TEXT_DEFAULT << returned << std::endl;
+								} else {
+											// really rejected? or just a job-update message
+											if (!retval_json.has<jsonxx::Object>("params")) {
+												rejected_cnt++;
+												int l = returned.size() - 2;
+												returned.erase(l);
+												std::cout << log_time() << TEXT_RED << " [STRATUM] SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON " << TEXT_DEFAULT << returned << std::endl;
+											}
+								}
+						} catch (...) {
+							  	//e
 						}
-					}
+				  }
+
 				}
 			}
+			// reconnect rest: stratum_login();
 			return true;
 		}
 	
@@ -647,8 +692,8 @@ class dynex_hasher_thread_obj {
 						
 						if (!H_stratum) {
 							// add nonce into blocktemplate_blob:
-                                                	std::string submitdata = bt.blocktemplate_blob;
-                                                	submitdata.replace(78, 8, nonce_hex); 
+              std::string submitdata = bt.blocktemplate_blob;
+              submitdata.replace(78, 8, nonce_hex); 
 							// submit block:
 							bool validated = submitblock(submitdata, daemon_host, daemon_port, curl);
 							if (validated) {
@@ -730,7 +775,7 @@ namespace Dynexservice {
 				return true;
 			}
 			
-			bool start(int threads_count, std::string daemon_host, std::string daemon_port, std::string address, int reserve_size, bool _stratum, std::string _STRATUM_URL, std::string _STRATUM_PORT, std::string _STRATUM_PAYMENT_ID, std::string _STRATUM_PASSWORD) {
+			bool start(int threads_count, std::string daemon_host, std::string daemon_port, std::string address, int reserve_size, bool _stratum, std::string _STRATUM_URL, std::string _STRATUM_PORT, std::string _STRATUM_PAYMENT_ID, std::string _STRATUM_PASSWORD, int _STRATUM_DIFF, std::string _MALLOB_NETWORK_ID) {
 				if (dynex_hasher_running) {
 					std::cout << log_time() << " [BLOCKCHAIN] CANNOT START DYNEXSOLVE  SERVICE - ALREADY RUNNING" << std::endl;
 			    		return false;	
@@ -747,6 +792,8 @@ namespace Dynexservice {
 					H_STRATUM_PORT = _STRATUM_PORT;
 					H_STRATUM_PAYMENT_ID = _STRATUM_PAYMENT_ID;
 					H_STRATUM_PASSWORD = _STRATUM_PASSWORD;
+					H_STRATUM_DIFF = _STRATUM_DIFF;
+					H_MALLOB_NETWORK_ID = _MALLOB_NETWORK_ID;
 					std::cout << log_time() << " [STRATUM] CONNECTING TO " << H_STRATUM_URL << ":" << H_STRATUM_PORT << std::endl;
 					stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
 					if (!stratumclient.initialised())
@@ -761,7 +808,14 @@ namespace Dynexservice {
 					    }
 					
 					std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
-					std::string COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					std::string COMMAND_LOGIN;
+					if (H_STRATUM_DIFF==0) {
+							COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					} else {
+						  // set custom diff
+							COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+ "."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+							std::cout << "DEBUG: " << COMMAND_LOGIN << std::endl;
+					}
 					if (!stratumclient.send(COMMAND_LOGIN))
 					  {
 					    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;

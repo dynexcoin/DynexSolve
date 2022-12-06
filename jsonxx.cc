@@ -24,12 +24,14 @@
 #endif
 #include <stdio.h>
 #include <cassert>
+
 void jsonxx::assertion( const char *file, int line, const char *expression, bool result ) {
     if( !result ) {
         fprintf( stderr, "[JSONXX] expression '%s' failed at %s:%d -> ", expression, file, line );
         assert( 0 );
     }
 }
+
 #if defined(JSONXX_REENABLE_NDEBUG)
 #   define  NDEBUG
 #   define _NDEBUG
@@ -886,7 +888,7 @@ std::string Object::json() const {
 std::string Object::xml( unsigned format, const std::string &header, const std::string &attrib ) const {
     using namespace xml;
     JSONXX_ASSERT( format == jsonxx::JSONx || format == jsonxx::JXML || format == jsonxx::JXMLex || format == jsonxx::TaggedXML );
-
+    
     jsonxx::Value v;
     v.object_value_ = const_cast<jsonxx::Object*>(this);
     v.type_ = jsonxx::Value::OBJECT_;
@@ -913,7 +915,7 @@ std::string Array::json() const {
 std::string Array::xml( unsigned format, const std::string &header, const std::string &attrib ) const {
     using namespace xml;
     JSONXX_ASSERT( format == jsonxx::JSONx || format == jsonxx::JXML || format == jsonxx::JXMLex || format == jsonxx::TaggedXML );
-
+    
     jsonxx::Value v;
     v.array_value_ = const_cast<jsonxx::Array*>(this);
     v.type_ = jsonxx::Value::ARRAY_;
@@ -987,7 +989,7 @@ std::string reformat( const std::string &input ) {
 std::string xml( std::istream &input, unsigned format ) {
     using namespace xml;
     JSONXX_ASSERT( format == jsonxx::JSONx || format == jsonxx::JXML || format == jsonxx::JXMLex || format == jsonxx::TaggedXML );
-
+    
     // trim non-printable chars
     for( char ch(0); !input.eof() && input.peek() <= 32; )
         input.get(ch);
