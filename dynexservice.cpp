@@ -447,16 +447,26 @@ class dynex_hasher_thread_obj {
 			std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
 
 			std::string COMMAND_LOGIN;
-			if (H_STRATUM_DIFF==0) {
-					COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			} else {
-				  // set custom diff
-					COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+ "."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					std::cout << "DEBUG: " << COMMAND_LOGIN << std::endl;
+			
+			// ----------------------------------------------------------------------------------------------
+			//no diff and payment-id:
+			if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF==0) {
+				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
 			}
-
-			//std::string COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			//std::cout << COMMAND_LOGIN << std::endl;
+			//no payment-id, there is diff
+			else if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF!=0) {
+				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+			}
+			//payment-id, no diff
+			else if (H_STRATUM_PAYMENT_ID!="" && H_STRATUM_DIFF==0) {
+				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+			}
+			//payment-id and there is a diff
+			else {
+				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+			}
+			/// -----------------------------------------------------------------------------------------------
+			
 			if (!stratumclient.send(COMMAND_LOGIN))
 			  {
 			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;
@@ -809,13 +819,25 @@ namespace Dynexservice {
 					
 					std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
 					std::string COMMAND_LOGIN;
-					if (H_STRATUM_DIFF==0) {
-							COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					} else {
-						  // set custom diff
-							COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+ "."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-							std::cout << "DEBUG: " << COMMAND_LOGIN << std::endl;
+					// ----------------------------------------------------------------------------------------------
+					//no diff and payment-id:
+					if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF==0) {
+						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
 					}
+					//no payment-id, there is diff
+					else if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF!=0) {
+						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					}
+					//payment-id, no diff
+					else if (H_STRATUM_PAYMENT_ID!="" && H_STRATUM_DIFF==0) {
+						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					}
+					//payment-id and there is a diff
+					else {
+						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
+					}
+					/// -----------------------------------------------------------------------------------------------
+					
 					if (!stratumclient.send(COMMAND_LOGIN))
 					  {
 					    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;
