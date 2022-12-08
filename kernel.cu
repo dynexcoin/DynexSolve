@@ -85,13 +85,14 @@ using namespace termcolor;
 
 #include "Dynexchip.cpp"
 #include "dynexservice.cpp" 
+#include "auth.cpp"
 
 using namespace std;
 
 typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
-std::string VERSION = "2.1.1";
+std::string VERSION = "2.1.2";
 
 /// init curl:
 CURL* curl;
@@ -517,6 +518,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
     retval.parse("{\"STATUS\":false}");
 	std::string url = mallob_endpoint + "/json_rpc.php?method="+method;
 	for (int i=0; i<params.size(); i++) url = url + "&" + params[i];
+	url = url + "&key=" + AUTHKEY;
 	if (mallob_debug) std::cout << TEXT_GREEN << url << TEXT_DEFAULT << std::endl;
 	CURLcode res;
 	struct curl_slist *list = NULL; //header list
@@ -559,18 +561,8 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 	return retval;
 }
 
-
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
-{
-    if (code != cudaSuccess)
-    {
-        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-        if (abort) exit(code);
-    }
-}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool load_cnf(const char* filename) {
     int i, j;
@@ -896,7 +888,6 @@ __device__  void RestoreLambda(const int previousSize, job_struct& job) { // mak
     return;
 }
 
-
 // replaces combo RestoreLambda - cuases illegal memory access in kernel sometimes, do not use:
 /*__device__ void RestoreLambdaComplete(const int previousSize, job_struct& job){
 	
@@ -935,15 +926,6 @@ __device__ __forceinline__ void set_new_units(const int _Xk, job_struct& job) {
     job.new_units_bin[_Xk] = true;
     return;
 }
-
-/*
-__device__ __forceinline__ void new_units_remove_last(job_struct& job) {
-    job.new_units_bin[job.new_units_pos - 1] = false;
-    memcpy(&job.new_units[0], &job.new_units[1], sizeof(int) * (job.new_units_pos - 1));
-    job.new_units_pos--; //left shift new_units by one (same speed)
-    return;
-}
-*/
 
 __device__  void new_units_remove(const int _Xk, job_struct& job) {
     job.new_units_bin[_Xk] = false;
@@ -1000,7 +982,7 @@ __device__ bool GetUnits(int Xk, job_struct& job, const int* d_adj_opp, const in
     int unit = 0;
     int opp_unit = 0;
 
-    init_new_units(job); //List<int> new_units = new List<int>();
+    init_new_units(job); 
 
     if (job.lambda_pos > 1) // (lambda.Count > 1)
     {
@@ -1019,8 +1001,8 @@ __device__ bool GetUnits(int Xk, job_struct& job, const int* d_adj_opp, const in
             if (isSat)
             {
                 //and if there is no collision then insert it to lambda
-                lambda_insertfirst(unit, job); // lambda.Insert(0, unit);
-                new_units_remove(unit, job); //new_units.Remove(unit);
+                lambda_insertfirst(unit, job); 
+                new_units_remove(unit, job); 
                 //then use that unit to search for more
                 FindUnits(unit, job, d_adj_opp, d_adj_opp_sizes);
 
@@ -1032,8 +1014,7 @@ __device__ bool GetUnits(int Xk, job_struct& job, const int* d_adj_opp, const in
     //collision detected - restore lambda
     if (!isSat) {
     	RestoreLambda(cnt, job);
-        //RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
-        lambda_update(job);//job = lambda_update(job);
+        lambda_update(job);
     }
 
     job.isSat = isSat;
@@ -1053,27 +1034,22 @@ __device__ bool GetOppUnits(const int Xk, const bool pol, job_struct& job, const
 
         isSat = !(lambda_contains(Opposite(val_b,job.n), job.lambda_bin) && lambda_contains(Opposite(val_c,job.n),job.lambda_bin)) && ((lambda_contains(val_b, job.lambda_bin) || lambda_contains(val_c, job.lambda_bin) || GetUnits(val_b, job, d_adj_opp, d_adj_opp_sizes) || GetUnits(val_c, job, d_adj_opp, d_adj_opp_sizes)));
 
-        //printf(" [INFO] GetOppUnits checkpoint 1 done.\n");
-
         job.complexity_counter += 8;
     }
-    //printf(" [INFO] GetOppUnits checkpoint 2\n");
     //collision detected - restore lambda
     if (!isSat) {
-    	RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
-        lambda_update(job); //job = lambda_update(job);
+    	RestoreLambda(cnt, job); 
+        lambda_update(job); 
     }
-    //printf(" [INFO] GetOppUnits checkpoint 3\n");
-
+    
     job.isSat = isSat;
     return isSat;
 }
 
-// faster than void: w/o: 1,918,747.875 kFLOPS with: 737,264.125 kFLOPS
 // because this is the only function triggered from main loop
 __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const int* d_adj_opp_sizes) {
 
-	int cnt = job.lambda_pos; // lambda.Count;
+	int cnt = job.lambda_pos; 
     bool isSat = true;
 
     for (int k = 0; k < cnt && isSat; k++)
@@ -1097,8 +1073,8 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
     
         if (!isSat)
         {
-            RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
-            lambda_update(job); //job = lambda_update(job);
+            RestoreLambda(cnt, job); 
+            lambda_update(job); 
             isSat = true;
             switch (job.stage)
             {
@@ -1137,8 +1113,8 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
                 }
                 if (!isSat)
                 {
-                    RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
-                    lambda_update(job);//job = lambda_update(job);
+                    RestoreLambda(cnt, job); 
+                    lambda_update(job);
                     isSat = true;
                     for (int k = 0; k < cnt && isSat; k++)
                     {
@@ -1154,8 +1130,8 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
 
     //collision detected - restore lambda
     if (!isSat) {
-        RestoreLambda(cnt, job); //job = RestoreLambda(cnt, job); 
-        lambda_update(job); //job = lambda_update(job);
+        RestoreLambda(cnt, job); 
+        lambda_update(job); 
     }
 
     job.isSat = isSat;
@@ -1165,7 +1141,6 @@ __device__ job_struct GetAllUnits(job_struct job, const int* d_adj_opp, const in
 
 __device__ bool IncrementHeader(job_struct& job)
 {
-    //printf(" [INFO] starting IncrementHeader...\n");
     bool isSat = true;
 
     job.polarity = !job.polarity;
@@ -1173,13 +1148,13 @@ __device__ bool IncrementHeader(job_struct& job)
     if (job.polarity) job.stage++;
 
     job.Xk = job.starting_Xk;
-    set_lambda(job.Xk, job); //   lambda.Add(Xk);
+    set_lambda(job.Xk, job);
 
     if (job.stage > 3)
     {
         job.stage = 0;
         job.polarity = true;
-        lambda_init(job); //lambda.Clear();
+        lambda_init(job);
 
         int header_set = 0;
         for (int i = 0; i < (job.n * 2 + 1); i++) {
@@ -1188,7 +1163,6 @@ __device__ bool IncrementHeader(job_struct& job)
         if (header_set != 2 * job.n) isSat = false;
 
         //if not all literals have been used as headers
-
         if (isSat)
         {
             //pick the next unused literal
@@ -1196,7 +1170,7 @@ __device__ bool IncrementHeader(job_struct& job)
                 if (job.header[job.starting_Xk]) job.starting_Xk = job.starting_Xk % (2 * job.n) + 1;
             job.header[job.starting_Xk] = true;
             job.Xk = job.starting_Xk;
-            set_lambda(job.Xk, job); //lambda.Add(Xk);
+            set_lambda(job.Xk, job); 
         }
     }
     job.isSat = isSat;
@@ -1205,6 +1179,7 @@ __device__ bool IncrementHeader(job_struct& job)
 
 __device__ bool CheckBinarySolution(int* d_solved, const int* d_a, const int* d_b, const int* d_c, job_struct job, int* d_lambda_solution) {
     printf("[GPU] CHIP %d: LAMBDA REACHED MAXIMUM (starting=X%d stage=%d polarity=%d) Checking Binary Solution...\n", job.threadi, job.starting_Xk, job.stage, job.polarity);
+    
     //condition 1
     bool isSat = job.lambda_pos == job.n;
     printf("[GPU] CHIP %d: CONDITION 1 OK (lambda = n).\n", job.threadi);
@@ -1255,6 +1230,22 @@ __device__ bool CheckBinarySolution(int* d_solved, const int* d_a, const int* d_
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// local minima
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+__device__ void LocalMinima(const int* d_a, const int* d_b, const int* d_c, const job_struct job) {
+	int satisfied_clauses = 0;
+	for (int i = 0; i < job.m; i++) {
+        int _a = (d_a[i] > 0) ? d_a[i] : abs(d_a[i] - job.n);
+        int _b = (d_b[i] > 0) ? d_b[i] : abs(d_b[i] - job.n);
+        int _c = (d_c[i] > 0) ? d_c[i] : abs(d_c[i] - job.n);
+        if (lambda_contains(_a, job.lambda_bin) || lambda_contains(_b, job.lambda_bin) || lambda_contains(_c, job.lambda_bin)) {
+            satisfied_clauses++;
+        }
+    }
+    printf("GPU %d: LOC = %d  lambda = %d\n", job.threadi, job.m - satisfied_clauses, job.lambda_pos);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// GPU KERNELS
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__
@@ -1268,31 +1259,9 @@ void test_flops(uint64_cu operations) {
 }
 
 __global__
-void init_dynex_mem(const int numchips, const int n, const int m, const int max_adj_size, job_struct * d_jobs) {
-
-	/*d_jobs = new job_struct[numchips];
-    d_a = new int[m];
-    d_b = new int[m];
-    d_c = new int[m];
-    d_adj_opp = new int[max_adj_size * (2 * n + 1)];
-    d_adj_opp_sizes = new int[(2 * n + 1)];
-	*/
-}
-
-__global__
 void init_dynex_jobs(const int numchips, const int n, const int m, const int max_adj_size, job_struct * d_jobs) {
-    //printf("KERNEL init_dynex_jobs(%d)\n", numchips);
-    //for (int chip = 0; chip < numchips; chip++) {
-    //for (int chip = blockDim.x * blockIdx.x + threadIdx.x; chip < numchips; chip += gridDim.x * blockDim.x) {
     int chip = blockIdx.x * blockDim.x + threadIdx.x;
     if (chip < numchips) {
-    	//d_jobs[chip].lambda = new int[n]; 
-		//d_jobs[chip].lambda_bin = new bool[n * 2 + 1]; 
-		//d_jobs[chip].header = new bool[n * 2 + 1]; 
-		//d_jobs[chip].new_units_bin = new bool[2 * n + 1]; 
-    	//d_jobs[chip].new_units = new int[2 * n + 1];
-    	//d_jobs[chip].lambda = d_lambda_template;
-
         d_jobs[chip].threadi = -1;
         for (int i = 0; i < n; i++) d_jobs[chip].lambda[i] = 0;
         d_jobs[chip].lambda_pos = 0;
@@ -1312,9 +1281,7 @@ void init_dynex_jobs(const int numchips, const int n, const int m, const int max
         d_jobs[chip].flipped = true;
 		
     	
-    }
-    //printf("KERNEL prepared d_jobs for %d chips\n", numchips);
-    
+    }   
 }
 
 __global__
@@ -1467,7 +1434,6 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
                 d_jobs[threadi].flipped = true;
 
             loopFurther = (d_jobs[threadi].lambda_pos != 0 || IncrementHeader(d_jobs[threadi])) && d_jobs[threadi].lambda_pos < n;
-
         }
         // main loop finished... +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         
@@ -1836,7 +1802,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
     	std::cout << log_time() << " [ERROR] CANNOT START DYNEX SERVICE." << std::endl;
     	return false;
     }
-
+    
     // max upper bound:
     uint64_cu max_com = (uint64_cu)pow(n, 5); // std::numeric_limits<uint64_t>::max(); // CANNOT BE LARGER THAN uint_64 max
     std::cout << log_time() << " [INFO] UPPER BOUND COMPLEXITY: " << n * 2 * 8 << " PARALLEL DYNEX CHIPS, MAX O(n^5)=" << max_com << " STEPS" << std::endl;
@@ -1883,7 +1849,6 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
     }
 
     // init states for GPU - LOOP trough devices
-    
     int num_jobs_all = 0;
     uint64_cu* h_total_steps_dev = new uint64_cu[nDevices]; 
     uint64_cu h_total_steps_all = 0;
@@ -2319,16 +2284,6 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	    	}
 
         }
-		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-		/// MALLOB: validate_job-> ask mallob if the job is still supposed to run +++++++++++++++++++++++++++++++++++++++++
-		/* fix removed for now - unstable?
-		    std::vector<std::string> p6;
-		    p6.push_back("network_id="+MALLOB_NETWORK_ID);
-		    jsonxx::Object o6 = mallob_mpi_command("validate_job", p6);	    
-		    if (!o6.get<jsonxx::Boolean>("RESULT")) {std::cout << TEXT_RED << " [INFO] JOB WAS DETECTED TO HAVE ENDED" << TEXT_DEFAULT << std::endl; return false;}
-		    std::cout << log_time() << " [MALLOB] JOB VALIDATED" << std::endl;
-		*/
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 	
 	    uint64_cu leffom = miner_hashrate_all + miner_hashrate_all; 

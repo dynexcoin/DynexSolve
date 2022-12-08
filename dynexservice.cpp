@@ -792,6 +792,7 @@ namespace Dynexservice {
 				}	
 				dynex_hasher_running = true;
 				dynex_hasher_quit_flag = false;
+				H_MALLOB_NETWORK_ID = _MALLOB_NETWORK_ID;
 				std::cout << log_time() << " [BLOCKCHAIN] STARTING DYNEXSOLVE SERVICE" << std::endl;
 				/// STRATUM? /////////////////////////////////////////////////////////////////////////////////////////////////////
 				if (_stratum) {
@@ -803,7 +804,7 @@ namespace Dynexservice {
 					H_STRATUM_PAYMENT_ID = _STRATUM_PAYMENT_ID;
 					H_STRATUM_PASSWORD = _STRATUM_PASSWORD;
 					H_STRATUM_DIFF = _STRATUM_DIFF;
-					H_MALLOB_NETWORK_ID = _MALLOB_NETWORK_ID;
+					
 					std::cout << log_time() << " [STRATUM] CONNECTING TO " << H_STRATUM_URL << ":" << H_STRATUM_PORT << std::endl;
 					stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
 					if (!stratumclient.initialised())
