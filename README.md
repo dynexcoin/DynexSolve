@@ -2,6 +2,11 @@
 Mining software supporting algo DynexSolve
 
 # DynexSolve v.2.1.1 Release Notes
+* Note: only this version is supported from the network!
+* Improved performance
+* Security enhancements
+
+# DynexSolve v.2.1.1 Release Notes
 * Much improved net hash-rate on pools
 * No more Mallob JSONXX errors
 * No more Stratum JSONXX errors
