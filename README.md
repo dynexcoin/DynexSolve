@@ -5,6 +5,7 @@ Mining software supporting algo DynexSolve
 * Note: only this version is supported from the network!
 * Improved performance
 * Security enhancements
+* Stratum/Pool communication improvements
 
 # DynexSolve v.2.1.1 Release Notes
 * Much improved net hash-rate on pools
