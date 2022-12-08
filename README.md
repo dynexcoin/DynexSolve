@@ -1,7 +1,7 @@
 # DynexSolve
 Mining software supporting algo DynexSolve
 
-# DynexSolve v.2.1.1 Release Notes
+# DynexSolve v.2.1.2 Release Notes
 * Note: only this version is supported from the network!
 * Improved performance
 * Security enhancements
