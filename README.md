@@ -1,5 +1,5 @@
 # DynexSolve
-Mining software supporting algo DynexSolve.
+Mining software supporting algo DynexSolve. Currently supporting CUDA
 
 Requirements:
 - libcurl (Ubuntu: sudo apt install curl)
