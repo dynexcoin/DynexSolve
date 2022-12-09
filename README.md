@@ -2,7 +2,7 @@
 Mining software supporting algo DynexSolve.
 
 Requirements:
-- libcurl
+- libcurl (Ubuntu: sudo apt install curl)
 
 # DynexSolve v.2.1.2 Release Notes
 * Note: only this version is supported from the network!
