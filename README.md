@@ -1,5 +1,8 @@
 # DynexSolve
-Mining software supporting algo DynexSolve
+Mining software supporting algo DynexSolve.
+
+Requirements:
+- libcurl
 
 # DynexSolve v.2.1.2 Release Notes
 * Note: only this version is supported from the network!
