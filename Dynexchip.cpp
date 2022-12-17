@@ -1012,10 +1012,12 @@ namespace Dynex {
 
 			    bool start(size_t threads_count, std::string _job_input_file, double dmm_alpha, double dmm_beta, double dmm_gamma, double dmm_delta, double dmm_epsilon, double dmm_zeta, double init_dt, bool _dynex_debugger, unsigned long long int steps_per_update) {
 
+				if (!threads_count) return false;
+
 				//already running?
 			    	if (dynex_chips_running) {
 			    		std::cout << log_time() << TEXT_CYAN <<" CANNOT START DYNEX CHIPS - ALREADY RUNNING" << TEXT_DEFAULT << std::endl;
-			    		return false;	
+			    		return false;
 			    	}
 			    	
 			    	// set receiving address, threads, rate, etc:
@@ -1031,10 +1033,7 @@ namespace Dynex {
 				    	observer_th.detach();
 						assert(!observer_th.joinable());
 						std::this_thread::sleep_for(std::chrono::milliseconds(250));
-						//sleep(5);
 			    	}
-			    	
-			    	
 			    	return true;
 			    }
 
@@ -1045,7 +1044,8 @@ namespace Dynex {
 			    	std::cout << log_time() << TEXT_CYAN << " DYNEX CHIPS STOPPED." << TEXT_DEFAULT << std::endl;
 			    	return true;
 			    };
-			    
+
+
 			  private:
 			  	std::string log_time() {
 					auto t = std::time(nullptr);
@@ -1057,6 +1057,7 @@ namespace Dynex {
 
 					return str;
 				}
+
 			    //bool worker_thread(uint32_t th_local_index);
 	  };
 

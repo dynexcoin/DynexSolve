@@ -1,21 +1,21 @@
 // Copyright (c) 2021-2022, The Dynex Project
-// 
+//
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without modification, are
 // permitted provided that the following conditions are met:
-// 
+//
 // 1. Redistributions of source code must retain the above copyright notice, this list of
 //    conditions and the following disclaimer.
-// 
+//
 // 2. Redistributions in binary form must reproduce the above copyright notice, this list
 //    of conditions and the following disclaimer in the documentation and/or other
 //    materials provided with the distribution.
-// 
+//
 // 3. Neither the name of the copyright holder nor the names of its contributors may be
 //    used to endorse or promote products derived from this software without specific
 //    prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 // MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
@@ -56,9 +56,11 @@
 
 #ifdef WIN32
 	#pragma comment(lib,"Crypto.lib")
+	#define __builtin_bswap32(x) _byteswap_ulong(x)
 #endif // WIN32
-extern "C"
-void cn_slow_hash(const void* data, size_t length, uint8_t * hash);
+
+extern "C" void cn_slow_hash(const void* data, size_t length, uint8_t * hash);
+extern std::string VERSION;
 
 //#define CURL_STATICLIB
 #include <curl/curl.h> //required for MPI - dependency
@@ -69,20 +71,22 @@ void cn_slow_hash(const void* data, size_t length, uint8_t * hash);
 static bool stratum_connected = false;
 static std::string H_STRATUM_JOB_ID = "";
 static std::string H_STRATUM_ID = "";
-static std::string H_STRATUM_BLOB = "";
-static std::string H_STRATUM_WALLET = "";
 static std::string H_STRATUM_TARGET = "";
-static bool H_stratum = false;
+static bool        H_stratum = false;
 static std::string H_STRATUM_URL = "";
-static std::string H_STRATUM_PORT = "";
-static std::string H_STRATUM_PAYMENT_ID = "";
+static int         H_STRATUM_PORT = 0;
+static std::string H_STRATUM_USER = "";
 static std::string H_STRATUM_PASSWORD = "";
-static int         H_STRATUM_DIFF = 0;
+static std::string H_MALLOB_NETWORK_ID = "";
+static int         H_DIFF = 0;
 static std::string H_POW = "";
+static uint8_t     H_BLOB[256] = {0}; // 76
+static size_t      H_BLOB_SIZE = 0;
 static stlplus::TCP_client stratumclient;
 static int accepted_cnt = 0;
 static int rejected_cnt = 0;
-static std::string H_MALLOB_NETWORK_ID = "";
+
+
 
 // Dynex colors
 #ifdef WIN32
@@ -103,7 +107,7 @@ static std::string H_MALLOB_NETWORK_ID = "";
 #define TEXT_CYAN     "\033[1;36m"
 #define TEXT_WHITE    "\033[1;37m"
 #define TEXT_SILVER   "\033[1;315m"
-#endif 
+#endif
 
 
 // block_template: ----------------------------------------------------------------------------------------
@@ -149,16 +153,16 @@ static inline uint64_t bytesToInt64(uint8_t bytes[8])
 }
 
 // convert string to uint8_t:
-static inline void convert(const char *s, int size, uint8_t * out) {
+static inline void convert(const char *s, uint8_t * out, int maxsize) {
   int i = 0;
-  while (*s) {
+  while (*s && i < maxsize) {
     char byte[3] = { *s, *(s + 1), 0 };
     out[i++] = strtol(byte, NULL, 16);
     s += 2;
   }
-  for (; i < 8; i += 1) {
-    out[i] = 0;
-  }
+  //for (; i < 8; i += 1) {
+  //  out[i] = 0;
+  //}
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -169,7 +173,7 @@ static inline uint64_t swap64(uint64_t x) {
   x = ((x & 0x0000ffff0000ffff) << 16) | ((x & 0xffff0000ffff0000) >> 16);
   return (x << 32) | (x >> 32);
 }
-#define swap64le swap64 //ident64 
+#define swap64le swap64 //ident64
 static inline uint64_t hi_dword(uint64_t val) {return val >> 32;}
 static inline uint64_t lo_dword(uint64_t val) {return val & 0xFFFFFFFF;}
 static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi) {
@@ -189,10 +193,12 @@ static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64
   assert(ac <= *product_hi);
   return product_lo;
 }
+
 static inline void mul(uint64_t a, uint64_t b, uint64_t &low, uint64_t &high) {low = mul128(a, b, &high);}
 static inline uint64_t ident64(uint64_t x) { return x; }
 static inline bool cadd(uint64_t a, uint64_t b) {return a + b < a;}
 static inline bool cadc(uint64_t a, uint64_t b, bool c) {return a + b < a || (c && a + b == (uint64_t) -1);}
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Dynex Service Class
@@ -200,37 +206,34 @@ static inline bool cadc(uint64_t a, uint64_t b, bool c) {return a + b < a || (c 
 
 class dynex_hasher_thread_obj {
 
-	std::promise<void> exitSignal;
-	std::future<void> futureObj;
-	
 	public:
 		uint64_t hashcounter = 0;
-		
+
 		// operator function --------------------------------------------------------------------------------------------
-		void operator()(int thread_id,int& sleep_time_ms,  uint64_t& leffom, std::atomic<bool>& hasher_quit_flag, std::string daemon_host, std::string daemon_port, CURL* curl, std::string address, int reserve_size) 
+		void operator()(int thread_id,int& sleep_time_ms,  uint64_t& leffom, std::atomic<bool>& hasher_quit_flag, std::string daemon_host, std::string daemon_port, CURL* curl, std::string address, int reserve_size)
 		{
 			bool workfinished = hasher_work(thread_id, sleep_time_ms, leffom, hasher_quit_flag, daemon_host, daemon_port, curl, address, reserve_size);
 			return;
 		}
 		// ---------------------------------------------------------------------------------------------------------------
-		
+
 	private:
-		// pretty log time: 
+		// pretty log time:
 		std::string log_time() {
-		    auto t = std::time(nullptr);
-		    auto tm = *std::localtime(&t);
+			auto t = std::time(nullptr);
+			auto tm = *std::localtime(&t);
 
-		    std::ostringstream oss;
-		    oss << std::put_time(&tm, "%d-%m-%Y %H:%M:%S");
-		    auto str = oss.str();
+			std::ostringstream oss;
+			oss << std::put_time(&tm, "%d-%m-%Y %H:%M:%S");
+			auto str = oss.str();
 
-		    return str;
+			return str;
 		}
 
 		// curl return value function:
 		static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp){
-		    ((std::string*)userp)->append((char*)contents, size * nmemb);
-		    return size * nmemb;
+			((std::string*)userp)->append((char*)contents, size * nmemb);
+			return size * nmemb;
 		}
 
 		// check difficulty
@@ -249,63 +252,64 @@ class dynex_hasher_thread_obj {
 		}
 
 		// try_hash: ----------------------------------------------------------------------------------------
-		bool try_hash(std::string blockhashing_blob, uint64_t nonce, uint64_t difficulty, bool logging = false) {
-			if (difficulty == 0) return false;
-			// convert nonce to hex:
-			std::stringstream ss;
-		    	ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(nonce);
-		    	std::string nonce_hex = ss.str().substr(6,2) + ss.str().substr(4,2) + ss.str().substr(2,2) + ss.str().substr(0,2); //little endian
-			if (logging) std::cout << "nonce_hex: " << nonce_hex << std::endl; 
-			// add nonce into blob => input
-			std::string input = blockhashing_blob;
-			input.replace(78, 8, nonce_hex); 
-			if (logging) std::cout << "INPUT: " << input << std::endl;
-			// convert input to unint8_t => input_hex
-			uint8_t input_size = input.size()/2;
-			uint8_t * input_hex = new uint8_t[input_size];
-			convert(input.c_str(), input.size(), input_hex);
-			if (logging) {
-				std::cout << "INPUT (HEX uint8_t)    :";
-				for (int i = 0; i < input_size; i++) printf("%02x", input_hex[i]);
-				printf("\n");	
+		bool try_hash(uint32_t nonce, bool logging = false) {
+			if (H_DIFF == 0) {
+				return false;
 			}
+
+			if (logging) {
+				std::stringstream ss;
+				ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(__builtin_bswap32(nonce));
+				std::cout << "nonce_hex: " << ss.str() << std::endl;
+				std::cout << "input_hex: ";
+				for (int i=0; i < H_BLOB_SIZE; i++) std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>((uint8_t)H_BLOB[i]);
+				std::cout << std::endl;
+			}
+
+			memcpy(&H_BLOB[39], &nonce, 4); // add nonce into blob => input
+
 			uint8_t hash[32];
-			cn_slow_hash(input_hex, input_size, hash); 
-			// convert output hash to std::string:
-			std::stringstream _outhash; _outhash << std::hex << std::setfill('0');
-			for (int i = 0; i < 32; i++) _outhash << std::hex << std::setw(2) << static_cast<int>((uint8_t)hash[i]);
-			std::string outhash = _outhash.str();
-			if (logging) std::cout << "OUTPUT (std::string) : " << outhash << std::endl;
-			if (H_stratum) H_POW = outhash; // stratum needs proof of work
-			// hash -> hash_64 (uint64): 
+			cn_slow_hash(H_BLOB, H_BLOB_SIZE, hash);
+
+			// hash -> hash_64 (uint64):
 			uint64_t hash64[4]; int hashpos = 0;
 			#pragma unroll
-			for (int i=0; i< 32; i = i + 8) {
-				uint8_t bytes[8]; 
-				#pragma unroll 
+			for (int i=0; i < 32; i = i + 8) {
+				uint8_t bytes[8];
+				#pragma unroll
 				for (int ii=0; ii<8; ii++) bytes[ii] = hash[i+ii];
 				hash64[hashpos] = bytesToInt64(bytes);
 				hashpos++;
 			}
+
 			if (logging) {
 				std::cout << "OUTPUT (HEX uint64_t): ";
-				for (int i=0; i< 4; i++) std::cout << std::hex << std::setw(16) << std::setfill('0') << hash64[i];		
+				for (int i=0; i< 4; i++) std::cout << std::hex << std::setw(16) << std::setfill('0') << hash64[i];
 				std::cout << std::endl;
 			}
+
 			// nonce found?
-			bool foundnonce = check_hash(hash64, difficulty);
-			//if (foundnonce) std::cout << " debug: check_hash " << outhash << " with difficulty " << difficulty << " result: TRUE" << std::endl;
-			if (foundnonce) return true;
+			if (check_hash(hash64, H_DIFF)) {
+				//std::cout << " debug: check_hash " << outhash << " with difficulty " << difficulty << " result: TRUE" << std::endl;
+				// convert output hash to std::string:
+				std::stringstream _outhash; _outhash << std::hex << std::setfill('0');
+				for (int i = 0; i < 32; i++) _outhash << std::hex << std::setw(2) << static_cast<int>((uint8_t)hash[i]);
+				std::string outhash = _outhash.str();
+				if (logging) std::cout << "OUTPUT (std::string) : " << outhash << std::endl;
+				if (H_stratum) H_POW = outhash; // stratum needs proof of work
+				return true;
+			}
+
 			return false;
 		}
-		
+
 		// rpc command handler: -------------------------------------------------------------------------------------------------
 		jsonxx::Object invokeJsonRpcCommand(std::string method, std::vector<std::string> params, std::string daemon_host, std::string daemon_port, CURL* curl) {
 			jsonxx::Object retval;
-			
+
 			std::string url = "http://" + daemon_host + ":" + daemon_port + "/json_rpc";
 			std::string postfields = "{\"jsonrpc\":\"2.0\",\"method\":\""+method+"\",\"params\":{";
-			
+
 			if (params.size()>0) {
 				for (int i=0; i<params.size(); i++) postfields = postfields+params[i]+",";
 				postfields.pop_back();
@@ -335,18 +339,18 @@ class dynex_hasher_thread_obj {
 					std::istringstream input(readBuffer);
 					retval.parse(input);
 				}
-				
+
 			}
 			//curl_global_cleanup();
 			return retval;
 		}
-		
+
 		// get_block_template ------------------------------------------------------------------------------------------------------
 		block_template get_blocktemplate(std::string address, int reserve_size, std::string daemon_host, std::string daemon_port, CURL* curl) {
 			block_template bt;
 			bt.difficulty = 0;
 			std::vector<std::string> params;
-			params.push_back("\"reserve_size\":"+std::to_string(reserve_size)); 
+			params.push_back("\"reserve_size\":"+std::to_string(reserve_size));
 			params.push_back("\"wallet_address\":\""+address+"\"");
 			jsonxx::Object retval = invokeJsonRpcCommand("getblocktemplate",params, daemon_host, daemon_port, curl);
 			if (!retval.has<jsonxx::Boolean>("ERROR")) {
@@ -362,7 +366,7 @@ class dynex_hasher_thread_obj {
 			}
 			return bt;
 		}
-		
+
 		// getlastblockheader -------------------------------------------------------------------------------------
 		block_header getlastblockheader(std::string daemon_host, std::string daemon_port, CURL* curl) {
 			block_header bh;
@@ -374,7 +378,7 @@ class dynex_hasher_thread_obj {
 				jsonxx::Object result = retval.get<jsonxx::Object>("result");
 				jsonxx::Object blockheader = result.get<jsonxx::Object>("block_header");
 				//std::cout << TEXT_GREEN << "parsed " << blockheader.json() << TEXT_DEFAULT << std::endl;
-				bh.depth = blockheader.get<jsonxx::Number>("depth"); 
+				bh.depth = blockheader.get<jsonxx::Number>("depth");
 				bh.difficulty = blockheader.get<jsonxx::Number>("difficulty");
 				bh.hash = blockheader.get<jsonxx::String>("hash");
 				bh.height = blockheader.get<jsonxx::Number>("height");
@@ -388,13 +392,13 @@ class dynex_hasher_thread_obj {
 			}
 			return bh;
 		}
-		
+
 		// submit block ----------------------------------------------------------------------------------------------
 		bool submitblock(std::string blockdata, std::string daemon_host, std::string daemon_port, CURL* curl) {
 			std::vector<std::string> params;
 			jsonxx::Object retval;
 			std::string url = "http://" + daemon_host + ":" + daemon_port + "/json_rpc";
-			std::string postfields = "{\"jsonrpc\":\"2.0\",\"method\":\"submitblock\",\"params\":[\""+blockdata+"\"],\"mallob\":\""+H_MALLOB_NETWORK_ID+"\"}";
+			std::string postfields = "{\"jsonrpc\":\"2.0\",\"method\":\"submitblock\",\"params\":[\""+blockdata+"\"]}";
 			CURLcode res;
 			std::string readBuffer;
 			curl = curl_easy_init();
@@ -417,118 +421,110 @@ class dynex_hasher_thread_obj {
 						return true;
 					}
 				}
-				
+
 			}
-			
+
 			return false;
 		}
-		
+
 		// Stratum: login ----------------------------------------------------------------------------------------------
 		bool stratum_login() {
+
+			H_DIFF = 0; // stop hashing
 			std::cout << log_time() << " [STRATUM] CONNECTING TO " << H_STRATUM_URL << ":" << H_STRATUM_PORT << std::endl;
-			
+
 			// reconnect properly:
-			stratumclient.close();
-			stlplus::TCP_client client(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()), 10000000);
+			if (stratumclient.initialised()) {
+				stratumclient.close();
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+			}
+
+			stlplus::TCP_client client(H_STRATUM_URL.c_str(), H_STRATUM_PORT, 10000000);
 			stratumclient = client;
-			//stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
-			
+
 			if (!stratumclient.initialised())
-			    {
-			      std::cout << log_time() << " [STRATUM] client failed to initialise" << std::endl;
-			      return false;
-			    }
-			    if (stratumclient.error())
-			    {
-			      std::cout << log_time() << " [STRATUM] client initialisation failed with error " << stratumclient.error() << std::endl;
-			      return false;
-			    }
-			
+			{
+				std::cout << log_time() << " [STRATUM] client failed to initialise" << std::endl;
+				return false;
+			}
+
+			if (stratumclient.error())
+			{
+				std::cout << log_time() << " [STRATUM] client initialisation failed with error " << stratumclient.error() << std::endl;
+				return false;
+			}
+
 			std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
 
 			std::string COMMAND_LOGIN;
-			
-			// ----------------------------------------------------------------------------------------------
-			//no diff and payment-id:
-			if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF==0) {
-				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			}
-			//no payment-id, there is diff
-			else if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF!=0) {
-				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			}
-			//payment-id, no diff
-			else if (H_STRATUM_PAYMENT_ID!="" && H_STRATUM_DIFF==0) {
-				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			}
-			//payment-id and there is a diff
-			else {
-				COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_WALLET+"."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-			}
-			/// -----------------------------------------------------------------------------------------------
-			
+			COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+H_STRATUM_USER+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\",\"agent\":\""+VERSION+"\"}}\n";
+			//std::cout << "### " << COMMAND_LOGIN << std::endl;
+
 			if (!stratumclient.send(COMMAND_LOGIN))
-			  {
-			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;
-			    return false;
-			  }
-			  
-			while (stratumclient.receive_ready(1000000))
+			{
+				std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;
+				return false;
+			}
+
+			std::string joined = "";
+
+			while (stratumclient.receive_ready(2000000))
 			{
 				std::string returned;
 				if (!stratumclient.receive(returned)) {
-					  std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
-					  return false;
+					std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
+					return false;
 				}
 				else {
-					if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
-						try {
-							  	jsonxx::Object retval_json;
-									retval_json.parse(returned);
-									
-									if (retval_json.has<jsonxx::Object>("result")) {
-										jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
-										jsonxx::Object job = retval_result.get<jsonxx::Object>("job");
-										H_STRATUM_JOB_ID = job.get<jsonxx::String>("job_id");
-										H_STRATUM_ID = job.get<jsonxx::String>("id");
-										H_STRATUM_BLOB = job.get<jsonxx::String>("blob");
-										H_STRATUM_TARGET = job.get<jsonxx::String>("target");
-										stratum_connected = true;
-									  	std::cout << log_time() << " [STRATUM] CONNECTED WITH ID " << H_STRATUM_ID << std::endl;
-									} else {
-										std::cout << log_time() << " [STRATUM] COULD NOT AUTHORIZE: " << returned << std::endl;
-									}
-						} catch (...) {
-							  	//e
+					jsonxx::Object retval_json;
+
+					joined.append(returned);
+					if (!retval_json.parse(joined)) {
+						std::cout << log_time() << " [STRATUM] JSON PARSE ERROR: " << joined << std::endl;
+						continue;
+					}
+
+					if (retval_json.has<jsonxx::Object>("result")) {
+						std::cout << log_time() << " [STRATUM] AUTHORIZED" << std::endl;
+						jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
+						if (retval_result.has<jsonxx::Object>("job")) {
+							if (stratum_newjob(retval_result.get<jsonxx::Object>("job"))) {
+								return true;
+							}
 						}
+						std::cout << log_time() << " [STRATUM] LOGIN FAILED: " << stratum_geterror(retval_json) << std::endl;
 					}
 				}
 			}
-			
-			return true;
+
+			return false;
 		}
-		
+
 		// Stratum: getjob ---------------------------------------------------------------------------------------------
-		bool stratum_getjob() {
+		bool stratum_getjob(int force) {
 			// stratumclient active?
 			if (!stratumclient.initialised())
-			      {
+			{
 				std::cout << log_time() << " [STRATUM] connection has closed, reconnecting..." << std::endl;
-				stratum_login();
-			      }
-			
-			// get job info:
-			std::string COMMAND_GETJOB = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getjob\",\"params\":{\"id\":\""+H_STRATUM_ID+"\"}}\n";
-			if (!stratumclient.send(COMMAND_GETJOB))
-			  {
-			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_GETJOB << std::endl;
-			    ///// RECONNECT TO POOL:
-			    stratum_login();
-			    ///// ---
-			    return false;
-			  }
-			  
-		        while (stratumclient.receive_ready(2000000))
+				if (!stratum_login())
+					return false;
+			}
+
+			if (force) {
+				// get job info:
+				std::cout << log_time() << " [STRATUM] GET JOB " << H_STRATUM_JOB_ID << std::endl;
+				std::string COMMAND_GETJOB = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getjob\",\"params\":{\"id\":\""+H_STRATUM_ID+"\"}}\n";
+				if (!stratumclient.send(COMMAND_GETJOB))
+				{
+					std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_GETJOB << std::endl;
+					stratum_login();
+					return false;
+				}
+			}
+
+			std::string joined = "";
+
+			while (stratumclient.receive_ready(force?2000000:100))
 			{
 				std::string returned = "";
 				if (!stratumclient.receive(returned)) {
@@ -536,123 +532,143 @@ class dynex_hasher_thread_obj {
 				  return false;
 				}
 				else {
-						//std::cout << "DEBUG: getjob: " << returned << std::endl;
-					  if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
-					  	  try {
-								  	jsonxx::Object retval_json;
-									  retval_json.parse(returned);
-									
-									  if (retval_json.has<jsonxx::Object>("result")) {
-												jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
-												H_STRATUM_JOB_ID = retval_result.get<jsonxx::String>("job_id");
-												H_STRATUM_ID = retval_result.get<jsonxx::String>("id");
-												H_STRATUM_BLOB = retval_result.get<jsonxx::String>("blob");
-												H_STRATUM_TARGET = retval_result.get<jsonxx::String>("target");
-											  //std::cout << log_time() << " [STRATUM] RETRIEVED JOB UPDATE JOB_ID = " << H_STRATUM_JOB_ID << std::endl;
-									  } else {
-											  //std::cout << log_time() << " [STRATUM] COULD NOT RETRIEVE JOB UPDATE: " << returned << std::endl;
-									  }
-							  } catch (...) {
-							  	//e
-							  }
-					  }
+					jsonxx::Object retval_json;
+
+					joined.append(returned);
+					if (!retval_json.parse(joined)) {
+						std::cout << log_time() << " [STRATUM] JSON PARSE ERROR: " << joined << std::endl;
+					}
+
+					if (retval_json.has<jsonxx::Object>("params")) {
+						if (stratum_newjob(retval_json.get<jsonxx::Object>("params"))) {
+							return true;
+						}
+					} else if (retval_json.has<jsonxx::Object>("result")) {
+						if (stratum_newjob(retval_json.get<jsonxx::Object>("result"))) {
+							return true;
+						}
+					} else {
+						std::cout << log_time() << " [STRATUM] GET JOB FAILED: " << stratum_geterror(retval_json) << std::endl;
+						return false;
+					}
 				}
 			}
 			return true;
 		}
-		
+
 		// Stratum: submit solution ------------------------------------------------------------------------------------------------
 		bool stratum_submit_solution(std::string found_nonce, std::string found_hash) {
 			// stratumclient active?
 			if (!stratumclient.initialised())
-			      {
+			{
 				std::cout << log_time() << " [STRATUM] connection has closed, reconnecting..." << std::endl;
 				stratum_login();
-			      }
-			
+				return false;
+			}
+
 			// get job info:
 			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve\",\"mallob\":\""+H_MALLOB_NETWORK_ID+"\"}}\n";
 			//std::cout << COMMAND_SUBMIT << std::endl;
 			if (!stratumclient.send(COMMAND_SUBMIT))
-			  {
-			    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_SUBMIT << std::endl;
-			    
-			    ///// RECONNECT TO POOL:
-			    stratum_login();
-			    ///// ---
+			{
+				std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_SUBMIT << std::endl;
+				stratum_login();
+				return false;
+			}
 
-			    return false;
-			  }
-			  
-		        while (stratumclient.receive_ready(2000000))
+			std::string joined = "";
+
+			while (stratumclient.receive_ready(2000000))
 			{
 				std::string returned;
 				if (!stratumclient.receive(returned)) {
-				  std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
-				  return false;
+					std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
+					return false;
 				}
 				else {
-					if (returned.size()>20 && returned[0]=='{' && returned[returned.size()-2]=='}') {
-						try {
-								//std::cout << "DEBUG: submitsolution: " << returned << std::endl;
-								jsonxx::Object retval_json;
-		            retval_json.parse(returned);
-		            if (retval_json.has<jsonxx::Object>("result")) {
-											int l = returned.size() - 2;
-											returned.erase(l);
-									  		//std::cout << log_time() << " [STRATUM] SHARE SUBMITTED. RESPONSE FROM POOL: \"" << returned << "\"" << std::endl;
-											accepted_cnt++;
-											std::cout << log_time() << TEXT_GREEN << " [STRATUM] SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
+					jsonxx::Object retval_json;
 
-								} else {
-											// really rejected? or just a job-update message
-											if (!retval_json.has<jsonxx::Object>("params")) {
-												rejected_cnt++;
-												int l = returned.size() - 2;
-												returned.erase(l);
-												std::cout << log_time() << TEXT_RED << " [STRATUM] SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON " << TEXT_DEFAULT << returned << std::endl;
-											}
-								}
-						} catch (...) {
-							  	//e
-						}
-				  }
+					joined.append(returned);
+					if (!retval_json.parse(joined)) {
+						std::cout << log_time() << " [STRATUM] JSON PARSE ERROR: " << joined << std::endl;
+						continue;
+					}
 
+					if (retval_json.has<jsonxx::Object>("result")) {
+						accepted_cnt++;
+						std::cout << log_time() << " [STRATUM] " << TEXT_GREEN << "SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
+						return true;
+					} else if (retval_json.has<jsonxx::Object>("params")) {
+						stratum_newjob(retval_json.get<jsonxx::Object>("params"));
+					} else {
+						rejected_cnt++;
+						std::cout << log_time() << " [STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON: " << stratum_geterror(retval_json) << TEXT_DEFAULT << std::endl;
+						stratum_getjob(1); // force job update
+					}
+					joined = "";
 				}
 			}
 			// reconnect rest: stratum_login();
+			return false;
+		}
+
+		// Stratum: geterror ---------------------------------------------------------------------------------------------
+		std::string stratum_geterror(jsonxx::Object obj) {
+			if (obj.has<jsonxx::Object>("error") && obj.get<jsonxx::Object>("error").has<jsonxx::String>("message")) {
+				return obj.get<jsonxx::Object>("error").get<jsonxx::String>("message");
+			}
+			return obj.json();
+		}
+
+		// Stratum: newjob ---------------------------------------------------------------------------------------------
+		bool stratum_newjob(jsonxx::Object obj) {
+			if (!obj.has<jsonxx::String>("job_id") ||
+				!obj.has<jsonxx::String>("id") ||
+				!obj.has<jsonxx::String>("blob") ||
+				!obj.has<jsonxx::String>("target")) {
+				std::cout << log_time() << " [STRATUM] JOB PARSE ERROR: " << obj.json() << std::endl;
+				return false;
+			}
+
+			//std::cout << log_time() << " [STRATUM] " << "JOB: " << obj.json() << std::endl;
+
+			H_STRATUM_JOB_ID = obj.get<jsonxx::String>("job_id");
+			H_STRATUM_ID = obj.get<jsonxx::String>("id");
+			H_STRATUM_TARGET = obj.get<jsonxx::String>("target");
+
+			// convert target to difficulty:
+			uint64_t targ;
+			std::stringstream ss;
+			ss << std::hex << H_STRATUM_TARGET;
+			ss >> targ;
+			H_DIFF = targ ? (uint64_t)(4294967295 / __builtin_bswap32(targ & 0xFFFFFFFF)) : 0;
+			std::cout << log_time() << " [STRATUM] " << "NEW JOB ID " << H_STRATUM_JOB_ID << " DIFF " << H_DIFF << std::endl;
+
+			std::string blob = obj.get<jsonxx::String>("blob");
+			H_BLOB_SIZE = std::min(blob.size()/2, sizeof(H_BLOB));
+			// convert hex blob to uint8_t
+			convert(blob.c_str(), H_BLOB, H_BLOB_SIZE);
+
 			return true;
 		}
-	
+
 		// thread runner -----------------------------------------------------------------------------------------------------------
 		bool hasher_work(int threadnum, int& sleep_time_ms, uint64_t& leffom, std::atomic<bool>& hasher_quit_flag, std::string daemon_host, std::string daemon_port, CURL* curl, std::string address, int reserve_size) {
-			
+
 			// init random generator:
 			std::random_device rd;
 			std::mt19937_64 gen(rd());
-		    	std::uniform_int_distribution<uint64_t> dis;
-			
-			uint64_t height;
-			uint64_t difficulty;
-			uint64_t reward;
-			float reward_dnx;
-			
-			std::string blockhashing_blob;
+		 	std::uniform_int_distribution<uint64_t> dis;
+
 			block_template bt;
-			block_header bh;
-			
-			if (!H_stratum) {
-				// get block template:
-				bt = get_blocktemplate(address, reserve_size, daemon_host, daemon_port, curl);
-				blockhashing_blob = bt.blockhashing_blob; 
-				height = bt.height;
-				difficulty = bt.difficulty; 
-				
-				// last blockheader:
-				bh = getlastblockheader(daemon_host, daemon_port, curl);
-				reward = bh.reward;
-				reward_dnx = (float)(reward)/1000000000;
+			//block_header bh;
+
+			H_DIFF = 0;
+
+			if (H_stratum) {
+				stratum_login();
 			}
+			auto tm1 = std::chrono::high_resolution_clock::now();
 
 			// loop until quit:
 			bool updatetemplate = true;
@@ -660,91 +676,71 @@ class dynex_hasher_thread_obj {
 				// is there work?
 				while (leffom > 0) {
 					// check for new blocktemplate?
-					if (updatetemplate || (hashcounter > 0 && hashcounter % 5000 == 0)) { // check every x hashes if still valid
+					if (updatetemplate || hashcounter % 500 == 0 || H_DIFF == 0) { // check every x hashes if still valid
 						if (!H_stratum) {
 							// last blockheader:
-							bh = getlastblockheader(daemon_host, daemon_port, curl);
 							bt = get_blocktemplate(address, reserve_size, daemon_host, daemon_port, curl);
-							blockhashing_blob = bt.blockhashing_blob; 
-							height = bt.height;
-							difficulty = bt.difficulty; 
-							reward = bh.reward;
-							reward_dnx = (float)(reward)/1000000000;
+							H_DIFF = bt.difficulty;
+							H_BLOB_SIZE = std::min(bt.blockhashing_blob.size()/2, sizeof(H_BLOB));
+							// convert hex blob to uint8_t
+							convert(bt.blockhashing_blob.c_str(), H_BLOB, H_BLOB_SIZE);
+							//bh = getlastblockheader(daemon_host, daemon_port, curl);
 						} else {
 							//stratum:
-							if (stratum_getjob()) {
-								blockhashing_blob = H_STRATUM_BLOB;
-								std::string diff_hex = H_STRATUM_TARGET.substr(6,2) + H_STRATUM_TARGET.substr(4,2) + H_STRATUM_TARGET.substr(2,2) + H_STRATUM_TARGET.substr(0,2);
-									// convert target to difficulty:
-								std::stringstream ss;
-								ss << std::hex << diff_hex;
-								ss >> difficulty;
-								difficulty = (uint64_t)(4294967295 / difficulty);
-								//std::cout << log_time() << " [STRATUM] new target " << H_STRATUM_TARGET << " hex " << diff_hex << " difficulty " << difficulty << std::endl;
-							}
+							stratum_getjob(H_DIFF?0:1);
 						}
-						updatetemplate = false;	
+						if (!H_DIFF) {
+							std::cout << log_time() << " [INFO] NO JOB, WAITING " << std::endl;
+							std::this_thread::sleep_for(std::chrono::seconds(5));
+							continue;
+						}
+						updatetemplate = false;
 					}
-					// --- end check for new blocktemplate
-					
+
 					// check a chash
 					uint64_t nonce = dis(gen);
-					bool found = try_hash(blockhashing_blob, nonce, difficulty, false);
-					
+					bool found = try_hash(nonce, false);
+
 					// block found?
 					if (found) {
 						//std::cout << "Nonce found: " << nonce << std::endl;
 						// convert nonce to hex:
 						std::stringstream ss;
-					    	ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(nonce);
-					  
-						std::string nonce_hex = ss.str().substr(6,2) + ss.str().substr(4,2) + ss.str().substr(2,2) + ss.str().substr(0,2); //little endian
-						
+						ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(__builtin_bswap32(nonce));
+						std::string nonce_hex = ss.str();
 						if (!H_stratum) {
 							// add nonce into blocktemplate_blob:
-              std::string submitdata = bt.blocktemplate_blob;
-              submitdata.replace(78, 8, nonce_hex); 
+							std::string submitdata = bt.blocktemplate_blob;
+							submitdata.replace(78, 8, nonce_hex);
 							// submit block:
 							bool validated = submitblock(submitdata, daemon_host, daemon_port, curl);
 							if (validated) {
 								accepted_cnt++;
-								std::cout << log_time() << TEXT_GREEN << " [BLOCKCHAIN] *** BLOCK FOUND AND VALIDATED *** (difficulty " << difficulty << ", height " << height << ") (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
-								
+								std::cout << log_time() << TEXT_GREEN << " [BLOCKCHAIN] *** BLOCK FOUND AND VALIDATED *** (difficulty " << bt.difficulty << ", height " << bt.height << ") (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
 							} else {
 								rejected_cnt++;
 								std::cout << log_time() << " [BLOCKCHAIN] Block found but not accepted from node (" << accepted_cnt << "/" << rejected_cnt << ")" << std::endl;
-								
 							}
-							// get block template:
-							bt = get_blocktemplate(address, reserve_size, daemon_host, daemon_port, curl);
-							blockhashing_blob = bt.blockhashing_blob; 
-							height = bt.height;
-							difficulty = bt.difficulty; 
-							
-							// last blockheader:
-							bh = getlastblockheader(daemon_host, daemon_port, curl);
-							reward = bh.reward;
-							reward_dnx = (float)(reward)/1000000000;
 						} else {
 							// stratum submit:
-							std::cout << log_time() << " [STRATUM] SUBMITTING PoW: " << H_POW << " (difficulty = " << difficulty << ")" << std::endl;
-							if (stratum_submit_solution(nonce_hex, H_POW)){
-								if (stratum_getjob()) {
-									blockhashing_blob = H_STRATUM_BLOB;
-									std::string diff_hex = H_STRATUM_TARGET.substr(6,2) + H_STRATUM_TARGET.substr(4,2) + H_STRATUM_TARGET.substr(2,2) + H_STRATUM_TARGET.substr(0,2);
-									// convert target to difficulty:
-									std::stringstream ss;
-									ss << std::hex << diff_hex;
-									ss >> difficulty;
-									difficulty = (uint64_t)(4294967295 / difficulty);
-									//std::cout << log_time() << " [STRATUM] new target " << H_STRATUM_TARGET << " hex " << diff_hex << " difficulty " << difficulty << std::endl;
-								}
-							}
+							std::cout << log_time() << " [STRATUM] SUBMITTING PoW: " << H_POW << " nonce " << nonce_hex << " diff " << H_DIFF << std::endl;
+							stratum_submit_solution(nonce_hex, H_POW);
 						}
-				
+						updatetemplate = true;
 					}
-					
+
+
 					hashcounter++;
+					if (hashcounter % 5000 == 0) {
+						auto tm2 = std::chrono::high_resolution_clock::now();
+						auto uptime = (std::chrono::duration_cast<std::chrono::seconds>(tm2 - tm1).count());
+						float hr = hashcounter / uptime;
+						std::cout << log_time() << " [INFO] HASHRATE "  << static_cast<int>(hr) << " (" << accepted_cnt << "/" << rejected_cnt << ") UPTIME: " << static_cast<int>(uptime) << std::endl;
+						std::ofstream fout("stats.json");
+						fout << "{ \"ver\": \"" << VERSION << "\", \"hr\": " << static_cast<int>(hr) << ", \"ac\": " << accepted_cnt << ", \"rj\": " << rejected_cnt << ", \"uptime\": " << static_cast<int>(uptime) << " } " << std::endl;
+						fout.close();
+					}
+
 					//std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_ms));
 					leffom--;
 					if (leffom==0) {
@@ -756,14 +752,13 @@ class dynex_hasher_thread_obj {
 						updatetemplate = true;
 					}
 				}
-				
-			
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
 			}
 			// --- end loop
-			
+
 			std::cout << log_time() << " [BLOCKCHAIN] LOOPING STOPPED" << std::endl;
 			hasher_quit_flag = true;
-			
+
 			return true;
 		}
 		// ----------------------------------------------------------------------------------------------------------------------------
@@ -773,148 +768,72 @@ class dynex_hasher_thread_obj {
 namespace Dynexservice {
 	class dynexservice {
 		public:
-			int num_threads;                         
+			int num_threads;
 			bool dynex_hasher_running = false;       // controls if another instance is already running (not allowed)
 			std::atomic_bool dynex_hasher_quit_flag; // if true, thread stops (can be set from anywhere)
-			uint64_t leffom = 0;	         
+			uint64_t leffom = 0;
 			int sleep_time_ms = 0; // unused
 			CURL* curl;                              // CURL pointer
-			
-			
+
+
 			bool init() {
 				return true;
 			}
-			
-			bool start(int threads_count, std::string daemon_host, std::string daemon_port, std::string address, int reserve_size, bool _stratum, std::string _STRATUM_URL, std::string _STRATUM_PORT, std::string _STRATUM_PAYMENT_ID, std::string _STRATUM_PASSWORD, int _STRATUM_DIFF, std::string _MALLOB_NETWORK_ID) {
+
+			bool start(int threads_count, std::string daemon_host, std::string daemon_port, std::string user, int reserve_size, bool stratum, std::string url, int port, std::string pass, std::string MALLOB_NETWORK_ID) {
 				if (dynex_hasher_running) {
 					std::cout << log_time() << " [BLOCKCHAIN] CANNOT START DYNEXSOLVE  SERVICE - ALREADY RUNNING" << std::endl;
-			    		return false;	
-				}	
+						return false;
+				}
 				dynex_hasher_running = true;
 				dynex_hasher_quit_flag = false;
-				H_MALLOB_NETWORK_ID = _MALLOB_NETWORK_ID;
 				std::cout << log_time() << " [BLOCKCHAIN] STARTING DYNEXSOLVE SERVICE" << std::endl;
 				/// STRATUM? /////////////////////////////////////////////////////////////////////////////////////////////////////
-				if (_stratum) {
+				if (stratum) {
 					// everything in global vars:
-					H_STRATUM_WALLET = address;
-					H_stratum = _stratum;
-					H_STRATUM_URL = _STRATUM_URL;
-					H_STRATUM_PORT = _STRATUM_PORT;
-					H_STRATUM_PAYMENT_ID = _STRATUM_PAYMENT_ID;
-					H_STRATUM_PASSWORD = _STRATUM_PASSWORD;
-					H_STRATUM_DIFF = _STRATUM_DIFF;
-					
-					std::cout << log_time() << " [STRATUM] CONNECTING TO " << H_STRATUM_URL << ":" << H_STRATUM_PORT << std::endl;
-					stratumclient.initialise(H_STRATUM_URL.c_str(),(unsigned short)atoi(H_STRATUM_PORT.c_str()),5000000);
-					if (!stratumclient.initialised())
-					    {
-					      std::cout << log_time() << " [STRATUM] client failed to initialise" << std::endl;
-					      return -1;
-					    }
-					    if (stratumclient.error())
-					    {
-					      std::cout << log_time() << " [STRATUM] client initialisation failed with error " << stratumclient.error() << std::endl;
-					      return -1;
-					    }
-					
-					std::cout << log_time() << " [STRATUM] CONNECTED, LOGGING IN... " << std::endl;
-					std::string COMMAND_LOGIN;
-					// ----------------------------------------------------------------------------------------------
-					//no diff and payment-id:
-					if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF==0) {
-						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					}
-					//no payment-id, there is diff
-					else if (H_STRATUM_PAYMENT_ID=="" && H_STRATUM_DIFF!=0) {
-						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					}
-					//payment-id, no diff
-					else if (H_STRATUM_PAYMENT_ID!="" && H_STRATUM_DIFF==0) {
-						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					}
-					//payment-id and there is a diff
-					else {
-						COMMAND_LOGIN = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"login\",\"params\":{\"login\":\""+address+"."+H_STRATUM_PAYMENT_ID+"+"+std::to_string(H_STRATUM_DIFF) + "\",\"pass\":\""+H_STRATUM_PASSWORD+"\"}}\n";
-					}
-					/// -----------------------------------------------------------------------------------------------
-					
-					if (!stratumclient.send(COMMAND_LOGIN))
-					  {
-					    std::cout << log_time() << " [STRATUM] failed to send message: " << COMMAND_LOGIN << std::endl;
-					    return -1;
-					  }
-					  
-				        while (stratumclient.receive_ready(1000000))
-					{
-						std::string returned;
-						if (!stratumclient.receive(returned)) {
-						  std::cout << log_time() << " [STRATUM] receive failed" << std::endl;
-						  return -1;
-						}
-						else {
-						  	jsonxx::Object retval_json;
-							retval_json.parse(returned);
-							
-							if (retval_json.has<jsonxx::Object>("result")) {
-								jsonxx::Object retval_result = retval_json.get<jsonxx::Object>("result");
-								jsonxx::Object job = retval_result.get<jsonxx::Object>("job");
-								H_STRATUM_JOB_ID = job.get<jsonxx::String>("job_id");
-								H_STRATUM_ID = job.get<jsonxx::String>("id");
-								H_STRATUM_BLOB = job.get<jsonxx::String>("blob");
-								H_STRATUM_TARGET = job.get<jsonxx::String>("target");
-							  	stratum_connected = true;
-							  	std::cout << log_time() << " [STRATUM] CONNECTED WITH ID " << H_STRATUM_ID << std::endl;
-							} else {
-								std::cout << log_time() << " [STRATUM] COULD NOT AUTHORIZE: " << returned << std::endl;
-							}
-						}
-					}
+					H_stratum = stratum;
+					H_STRATUM_URL = url;
+					H_STRATUM_PORT = port;
+					H_STRATUM_PASSWORD = pass;
+					H_STRATUM_USER = user;
+					H_MALLOB_NETWORK_ID = MALLOB_NETWORK_ID;
 				}
 				//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-			    	// init curl: (for daemon)
-			    	curl_global_init(CURL_GLOBAL_DEFAULT);
-			    	
-			    	// start chip threads:
-			    	for (size_t i=0; i<threads_count; i++) {
-			    		std::thread observer_th(dynex_hasher_thread_obj(), i, std::ref(sleep_time_ms), std::ref(leffom), std::ref(dynex_hasher_quit_flag), daemon_host, daemon_port, curl, address, reserve_size);
-				    	observer_th.detach();
+				// init curl: (for daemon)
+				curl_global_init(CURL_GLOBAL_DEFAULT);
+
+				// start chip threads:
+				for (size_t i=0; i<threads_count; i++) {
+					std::thread observer_th(dynex_hasher_thread_obj(), i, std::ref(sleep_time_ms), std::ref(leffom), std::ref(dynex_hasher_quit_flag), daemon_host, daemon_port, curl, user, reserve_size);
+					observer_th.detach();
 					assert(!observer_th.joinable());
-			    	}
-			    	
-			    	curl_global_cleanup();
-			    	
-			    	return true;
+				}
+
+				curl_global_cleanup();
+
+				return true;
 			}
-			
+
 			bool stop() {
 				dynex_hasher_running = false;
 				dynex_hasher_quit_flag = true;
 				std::cout << log_time() << " [BLOCKCHAIN] DYNEXSOLVE SERVICE STOPPED" << std::endl;
-			    	return true;
+					return true;
 			}
+
 		private:
 			// pretty log time:
 			std::string log_time() {
-			    auto t = std::time(nullptr);
-			    auto tm = *std::localtime(&t);
+				auto t = std::time(nullptr);
+				auto tm = *std::localtime(&t);
 
-			    std::ostringstream oss;
-			    oss << std::put_time(&tm, "%d-%m-%Y %H:%M:%S");
-			    auto str = oss.str();
+				std::ostringstream oss;
+				oss << std::put_time(&tm, "%d-%m-%Y %H:%M:%S");
+				auto str = oss.str();
 
-			    return str;
+				return str;
 			}
+
 	};
 }
-
-
-
-
-
-
-
-
-
-
