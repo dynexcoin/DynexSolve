@@ -4,6 +4,10 @@ Mining software supporting algo DynexSolve. Currently supporting CUDA
 Requirements:
 - libcurl (Ubuntu: sudo apt install curl)
 
+# DynexSolve v.2.2.1 Release Notes
+* fixed ERROR Atomic Job not existing or expired
+* Stable release
+
 # DynexSolve v.2.2.0 Release Notes
 * Note: only this version is supported from the network!
 * Improved Stratum protocol handling
