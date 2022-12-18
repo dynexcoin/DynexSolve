@@ -91,7 +91,7 @@ using namespace std;
 typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
-std::string VERSION = "2.2.0";
+std::string VERSION = "2.2.1";
 std::string mallob_endpoint = "http://mallob.dynexcoin.org";
 
 
@@ -559,7 +559,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 	if (!retval.has<jsonxx::Boolean>("result")) {
 		retval << "result" << ret;
 	}
-	//if (mallob_debug) std::cout << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
+	if (mallob_debug) std::cout << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
 	return retval;
 }
 
@@ -2013,7 +2013,7 @@ int init_states(int dev, int maximum_jobs) {
 				std::cout << log_time() << TEXT_RED << " [INFO] NO CHIPS REQUIRED FOR THE CURRENT JOB - PLEASE UPDATE YOUR DYNEXSOLVE VERSION" << TEXT_DEFAULT << std::endl;
 				return 0;
 			}
-			_CHIP_FROM = o3.get<jsonxx::Number>("chips_from");
+			_CHIP_FROM = o3.get<jsonxx::Number>("chip_from");
 			_CHIP_TO = o3.get<jsonxx::Number>("chip_to");
 			std::cout << log_time() << " [MALLOB] WE GOT CHIPS " << _CHIP_FROM << " TO " << _CHIP_TO << " ASSIGNED." << std::endl;
 			// did we get too many assigned?
@@ -2056,14 +2056,6 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	// starting literal: n * 2 (positive and negative)
 	// stage: 0,1,2,3
 	// polarity: true, false
-
-	// Dynex Service start:
-	dynexservice.leffom = 0;
-	std::string USER = MINING_ADDRESS + (stratum ? (STRATUM_PAYMENT_ID != "" ? "."+STRATUM_PAYMENT_ID : "") + (STRATUM_DIFF != 0 ? "+"+std::to_string(STRATUM_DIFF) : "") : "");
-	if (!dynexservice.start(1, DAEMON_HOST, DAEMON_PORT, USER, 0, stratum, STRATUM_URL, STRATUM_PORT, STRATUM_PASSWORD, MALLOB_NETWORK_ID)){
-		std::cout << log_time() << " [ERROR] CANNOT START DYNEX SERVICE." << std::endl;
-		return false;
-	}
 
 	// max upper bound:
 	uint64_cu max_com = (uint64_cu)pow(n, 5); // std::numeric_limits<uint64_t>::max(); // CANNOT BE LARGER THAN uint_64 max
@@ -2198,7 +2190,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
 		p5.push_back("steps=" + std::to_string(h_total_steps_all));
 		p5.push_back("version=" + VERSION);
-		jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 1);
+		jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
 		if (!o5.get<jsonxx::Boolean>("result")) {
 			std::cout << TEXT_RED << " [INFO] ERROR: ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
 			std::cout << TEXT_RED << " PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE." << TEXT_DEFAULT << std::endl;
@@ -2207,6 +2199,14 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		std::cout << log_time() << " [MALLOB] ATOMIC STATE UPDATED" << std::endl;
 	}
 	/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+	// Dynex Service start:
+	dynexservice.leffom = 0;
+	std::string USER = MINING_ADDRESS + (stratum ? (STRATUM_PAYMENT_ID != "" ? "." + STRATUM_PAYMENT_ID : "") + (STRATUM_DIFF != 0 ? "+" + std::to_string(STRATUM_DIFF) : "") : "");
+	if (!dynexservice.start(1, DAEMON_HOST, DAEMON_PORT, USER, 0, stratum, STRATUM_URL, STRATUM_PORT, STRATUM_PASSWORD, MALLOB_NETWORK_ID)) {
+		std::cout << log_time() << " [ERROR] CANNOT START DYNEX SERVICE." << std::endl;
+		return false;
+	}
 
 	/// looped kernel start:
 	for (int dev = 0; dev < nDevices; dev++) {
