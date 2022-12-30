@@ -59,6 +59,8 @@
 #include <algorithm>
 #endif
 
+#include "log.hpp"
+
 std::vector<std::string> splitString(const std::string& str, char delim);
 
 // ODE integration types:
@@ -94,27 +96,6 @@ typedef std::vector< value_type > state_type;
 // FTP server for jobs:
 #define FTP_ADDRESS "ftp.dynexcoin.org"
 #define FTP_PORT "21"
-
-// Dynex colors
-#ifdef WIN32
-#define TEXT_DEFAULT  ""
-#define TEXT_YELLOW   ""
-#define TEXT_GREEN    ""
-#define TEXT_RED      ""
-#define TEXT_BLUE     ""
-#define TEXT_CYAN     ""
-#define TEXT_WHITE    ""
-#define TEXT_SILVER   ""
-#else
-#define TEXT_DEFAULT  "\033[0m"
-#define TEXT_YELLOW   "\033[1;33m"
-#define TEXT_GREEN    "\033[1;32m"
-#define TEXT_RED      "\033[1;31m"
-#define TEXT_BLUE     "\033[1;34m"
-#define TEXT_CYAN     "\033[1;36m"
-#define TEXT_WHITE    "\033[1;37m"
-#define TEXT_SILVER   "\033[1;315m"
-#endif 
 
 
 //---------------------------------------------------------------------------------------------------------------------------
@@ -295,23 +276,10 @@ class dynex_chip_thread_obj {
 			  return true;
 		}
 
-	
-		// helpers: --------------------------------------------------------------------------------------------------------------------
-		std::string log_time() {
-			auto t = std::time(nullptr);
-			auto tm = *std::localtime(&t);
-
-			std::ostringstream oss;
-			oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-			auto str = oss.str();
-			
-			return str;
-		}
-
 		// work: ------------------------------------------------------------------------------------------------------------------------
 		// allocates memory, sets params and initial assignments, then starts the ode integration
 		bool dynex_work(int chip_id, int _thread_count, std::atomic<bool>& dynex_quit_flag, const char* input_file, double _dmm_alpha, double _dmm_beta, double _dmm_gamma, double _dmm_delta, double _dmm_epsilon, double _dmm_zeta, double _init_dt) {
-			//std::cout << log_time() << TEXT_CYAN << "[DYNEX CHIP "<<chip_id<<"] STARTING WORK " << job_user_id << "_" << job_id << "..." << TEXT_DEFAULT << std::endl;
+			//LogTS << TEXT_CYAN << "[DYNEX CHIP "<<chip_id<<"] STARTING WORK " << job_user_id << "_" << job_id << "..." << TEXT_DEFAULT << std::endl;
 			load_input_file(chip_id, input_file);
 
 			dmm_alpha = _dmm_alpha;
@@ -688,7 +656,7 @@ class dynex_chip_thread_obj {
                         printf(TEXT_YELLOW); 
                         printf("c [CPU %d] SAT (VERIFIED)\n",chip_id); 
                         solved = 1;
-                        std::cout << log_time() << " [CHIP" << chip_id << "] " << TEXT_YELLOW << "FOUND A SOLUTION." << TEXT_DEFAULT << std::endl;
+                        LogTS << "[CHIP" << chip_id << "] " << TEXT_YELLOW << "FOUND A SOLUTION." << TEXT_DEFAULT << std::endl;
                         //write solution to file:
                         FILE *fs = fopen(SOLUTION_FILE.c_str(), "w");
                         for (int i=0; i<n; i++) {
@@ -799,13 +767,13 @@ class dynex_chip_thread_obj {
         	while (solved!=1 && !dynex_quit_flag) {
         		//max steps reached?
         		if (stepcounter[0]>maxsteps) {
-        			std::cout << log_time() << "[CPU " << node->id << "] MAX "<<stepcounter[0]<<" INTEGRATION STEPS REACHED - WE QUIT. " << std::endl;
+        			LogTS << "[CPU " << node->id << "] MAX "<<stepcounter[0]<<" INTEGRATION STEPS REACHED - WE QUIT. " << std::endl;
         			return 0;
         		}
         		// status update?
         		if (stepcounter[0] >0 && stepcounter[0] % steps_per_update == 0) { //10000
         			// screen update:
-        			std::cout << log_time() << TEXT_CYAN << " [CPU " << node->id << "] SIMULATED TIME="<< t <<" ENERGY=" << energy_thread_min[0] << " | GLOBAL=" << global_thread[0] << TEXT_DEFAULT << std::endl;
+        			LogTS << TEXT_CYAN << "[CPU " << node->id << "] SIMULATED TIME="<< t <<" ENERGY=" << energy_thread_min[0] << " | GLOBAL=" << global_thread[0] << TEXT_DEFAULT << std::endl;
         		}
 				auto dxdt = dmm_generate_dxdt(node->id, x, t);
 				
@@ -858,7 +826,7 @@ class dynex_chip_thread_obj {
 		    node.optimal = (int *) calloc((size_t) n, sizeof(int));
 
 		    //run ODE:
-		    std::cout << log_time() << TEXT_CYAN << " [CPU "<<chip_id<<"] STARTING ODE INTEGRATION..." << TEXT_DEFAULT << std::endl;
+		    LogTS << TEXT_CYAN << "[CPU "<<chip_id<<"] STARTING ODE INTEGRATION..." << TEXT_DEFAULT << std::endl;
 			int result = dmm(&node, dynex_quit_flag); // <== run ODE integration
 			// show time:
     		t_end_thread[0] = clock();
@@ -891,7 +859,7 @@ class dynex_chip_thread_obj {
 			
 			int i, j;
 			char buffer[512];
-			if (dynex_debugger) std::cout << log_time() << TEXT_CYAN << " [CPU "<<chip_id<<"] LOADING INPUT FILE..." << job_input_file << TEXT_DEFAULT << std::endl;
+			if (dynex_debugger) LogTS << TEXT_CYAN << "[CPU "<<chip_id<<"] LOADING INPUT FILE..." << job_input_file << TEXT_DEFAULT << std::endl;
 			
 			/// load CNF header:
 			int ret;
@@ -1016,7 +984,7 @@ namespace Dynex {
 
 				//already running?
 			    	if (dynex_chips_running) {
-			    		std::cout << log_time() << TEXT_CYAN <<" CANNOT START DYNEX CHIPS - ALREADY RUNNING" << TEXT_DEFAULT << std::endl;
+			    		LogTS << TEXT_CYAN << "CANNOT START DYNEX CHIPS - ALREADY RUNNING" << TEXT_DEFAULT << std::endl;
 			    		return false;
 			    	}
 			    	
@@ -1025,7 +993,7 @@ namespace Dynex {
 			    	dynex_chips_running = true;
 			    	dynex_chip_state = DYNEX_STATE_IDLE;
 			    	
-			    	std::cout << log_time() << TEXT_CYAN <<" [CPU] STARTING " << dynex_chip_threads << " DYNEX CHIPS ON CPU " << TEXT_DEFAULT << std::endl;
+			    	LogTS << TEXT_CYAN << "[CPU] STARTING " << dynex_chip_threads << " DYNEX CHIPS ON CPU " << TEXT_DEFAULT << std::endl;
 			    	dynex_quit_flag = false;
 			    	// start chip threads:
 			    	for (size_t i=0; i<threads_count; i++) {
@@ -1041,22 +1009,9 @@ namespace Dynex {
 			    	dynex_chips_running = false;
 			    	dynex_quit_flag = true;
 			    	dynex_chip_state = DYNEX_STATE_OFF;
-			    	std::cout << log_time() << TEXT_CYAN << " DYNEX CHIPS STOPPED." << TEXT_DEFAULT << std::endl;
+			    	LogTS << TEXT_CYAN << "DYNEX CHIPS STOPPED." << TEXT_DEFAULT << std::endl;
 			    	return true;
 			    };
-
-
-			  private:
-			  	std::string log_time() {
-					auto t = std::time(nullptr);
-					auto tm = *std::localtime(&t);
-
-					std::ostringstream oss;
-					oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-					auto str = oss.str();
-
-					return str;
-				}
 
 			    //bool worker_thread(uint32_t th_local_index);
 	  };
