@@ -57,6 +57,7 @@
 #ifdef WIN32
 	#pragma comment(lib,"Crypto.lib")
 	#define __builtin_bswap32(x) _byteswap_ulong(x)
+	#define NOMINMAX
 #endif // WIN32
 
 extern "C" void cn_slow_hash(const void* data, size_t length, uint8_t * hash);
