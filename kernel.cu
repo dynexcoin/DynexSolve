@@ -96,7 +96,7 @@ typedef unsigned long long int uint64_cu;
 std::string VERSION = "2.2.2";
 std::string mallob_endpoint = "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
 
-#define MAX_ATOMIC_ERR  25
+#define MAX_ATOMIC_ERR  15 //25
 
 /// init curl:
 CURL* curl;
@@ -2555,6 +2555,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 
 	auto t1 = std::chrono::high_resolution_clock::now();
 	auto t3 = t1;
+	auto t5 = t1;
 
 	/// looped kernel start:
 	for (int dev = 0; dev < nDevices; dev++) {
@@ -2696,6 +2697,8 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_dev_best;
 		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_threadi[0];
 		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_nonce[0];
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << n;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << m;
 		std::string sstra_blob(sstra.str());
 		POUW_BLOB = sstra_blob;
 		// state hash:
@@ -2771,10 +2774,17 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 				gpuErrchk(cudaMemcpy(d_total_steps[dev], h_total_steps, sizeof(uint64_cu), cudaMemcpyHostToDevice));
 			}
 		}
-
+		
 		if (!testing && count_batches % 10 == 0) {
 			/// GPU probe:
 			if (!gpu_speed(miner_hashrate, start, stop)) return false;
+		}
+		
+		auto t6 = std::chrono::high_resolution_clock::now();
+		auto updated = std::chrono::duration_cast<std::chrono::seconds>(t6 - t5).count();
+
+		//if (!testing && (count_batches % 3 == 0 || errors)) {
+		if (!testing && updated >= 60) {
 			/// MALLOB: update_job_atomic -> let mallob know that we are working ++++++++++++++++++++++++++++++++++++++++++++++
 			std::vector<std::string> p5;
 			p5.push_back("network_id=" + MALLOB_NETWORK_ID);
@@ -2788,6 +2798,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 			if (o5.get<jsonxx::Boolean>("result")) {
 				LogTS << "[MALLOB] ATOMIC STATE UPDATED" << std::endl;
 				errors = 0;
+				t5 = t6;
 			} else if (o5.has<jsonxx::Boolean>("status")) {
 				//LogTS << TEXT_RED << "[ERROR] ATOMIC JOB EXPIRED" << TEXT_DEFAULT << std::endl;
 				return false;
