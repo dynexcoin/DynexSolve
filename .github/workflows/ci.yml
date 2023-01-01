@@ -74,7 +74,7 @@ jobs:
           rm -rf DynexSolve/build;
           mkdir -p DynexSolve/build;
           cd DynexSolve && cp ../Dynex/build/src/libCrypto.a .;
-          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -Xcompiler -march=${{ matrix.arch }}" \
+          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -march=${{ matrix.arch }}" \
           nvcc ${CC} ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a;
           )
       - name: create artifacts
@@ -154,7 +154,7 @@ jobs:
           rm -rf DynexSolve/build;
           mkdir -p DynexSolve/build;
           cd DynexSolve && cp ../Dynex/build/src/libCrypto.a .;
-          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -Xcompiler -march=${{ matrix.arch }}" \
+          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -march=${{ matrix.arch }}" \
           nvcc ${CC} ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a;
           )
       - name: create artifacts
@@ -234,7 +234,7 @@ jobs:
           rm -rf DynexSolve/build;
           mkdir -p DynexSolve/build;
           cd DynexSolve && cp ../Dynex/build/src/libCrypto.a .;
-          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -Xcompiler -march=${{ matrix.arch }}" \
+          CC="-std=c++11 -ccbin=g++ -Xcompiler -mtune=generic -Xcompiler -march=${{ matrix.arch }}" \
           nvcc ${CC} ip_sockets.cpp portability_fixes.cpp tcp_sockets.cpp dprintf.cpp jsonxx.cc Dynexchip.cpp kernel.cu -o dynexsolve -O4 -lcurl libCrypto.a;
           )
       - name: create artifacts
