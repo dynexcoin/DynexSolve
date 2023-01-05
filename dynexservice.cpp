@@ -540,6 +540,7 @@ class dynex_hasher_thread_obj {
 
 		// Stratum: submit solution ------------------------------------------------------------------------------------------------
 		bool stratum_submit_solution(std::string found_nonce, std::string found_hash) {
+		
 			// stratumclient active?
 			if (!stratumclient.initialised())
 			{
@@ -643,8 +644,10 @@ class dynex_hasher_thread_obj {
 
 			// init random generator:
 			std::random_device rd;
-			std::mt19937_64 gen(rd());
-			std::uniform_int_distribution<uint64_t> dis;
+			//std::mt19937_64 gen(rd());
+			//std::uniform_int_distribution<uint64_t> dis;
+			std::mt19937 gen(rd());
+			std::uniform_int_distribution<uint32_t> dis;
 
 			block_template bt;
 			//block_header bh;
@@ -690,7 +693,8 @@ class dynex_hasher_thread_obj {
 					}
 
 					// check a chash
-					uint64_t nonce = dis(gen);
+					//uint64_t nonce = dis(gen);
+					uint32_t nonce = dis(gen);
 					bool found = try_hash(nonce, false);
 
 					// block found?

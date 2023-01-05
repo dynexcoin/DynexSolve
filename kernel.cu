@@ -94,6 +94,7 @@ typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
 std::string VERSION = "2.2.2";
+std::string REVISION = "b";
 std::string mallob_endpoint = "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
 
 #define MAX_ATOMIC_ERR  15 //25
@@ -381,18 +382,6 @@ struct FtpFile {
 	FILE *stream;
 };
 
-static int my_fwrite(void *buffer, size_t size, size_t nmemb, void *stream)
-{
-	struct FtpFile *out = (struct FtpFile *)stream;
-	if(!out->stream) {
-	/* open file for writing */
-		out->stream = fopen(out->filename, "wb");
-		if(!out->stream)
-			return 0; /* failure, cannot open file to write */
-	}
-	return fwrite(buffer, size, nmemb, out->stream);
-}
-
 bool upload_file(const std::string filename) {
 
 	//CURL *curl;
@@ -453,48 +442,34 @@ bool upload_file(const std::string filename) {
 	return true;
 }
 
+size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    size_t written = fwrite(ptr, size, nmemb, stream);
+    return written;
+}
+
 bool download_file(const std::string filename) {
 
-	//CURL *curl;
-	CURLcode res;
-	struct FtpFile ftpfile = {
-		filename.c_str(), /* name to store the file as if successful */
-		NULL
-	};
+	FILE *fp;
+    CURLcode res;
+    std::string url = "https://github.com/dynexcoin/dynexjobs/raw/main/" + filename;
+    
+    curl = curl_easy_init();
+    if (curl) {
+        fp = fopen(filename.c_str(),"wb");
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
+        res = curl_easy_perform(curl);
+        /* always cleanup */
+        curl_easy_cleanup(curl);
+        fclose(fp);
+        return true;
+    }
+	
+	return false;
 
-	//curl_global_init(CURL_GLOBAL_DEFAULT);
-
-	curl = curl_easy_init();
-	if(curl) {
-		std::string remoteurl = REMOTE_URL + filename;
-		curl_easy_setopt(curl, CURLOPT_URL, remoteurl.c_str());
-		curl_easy_setopt(curl, CURLOPT_USERPWD, FTPUSER);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-		curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-		/* Define our callback to get called when there's data to be written */
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, my_fwrite);
-		/* Set a pointer to our struct to pass to the callback */
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ftpfile);
-		/* Switch on full protocol/debug output */
-		//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-		res = curl_easy_perform(curl);
-		/* always cleanup */
-		curl_easy_cleanup(curl);
-		if(CURLE_OK != res) {
-			/* we failed */
-			fprintf(stderr, " [INFO] ERROR: download failed: %d\n", res);
-			return false;
-		}
-	} else {
-		return false;
-	}
-
-	if (ftpfile.stream)
-		fclose(ftpfile.stream); /* close the local file */
-
-	//curl_global_cleanup();
-	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -507,49 +482,64 @@ bool download_file(const std::string filename) {
 ////////////////////////////////////////////////////////////////////////////////////////////////
 jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params, int timeout) {
 	jsonxx::Object retval;
-	bool ret = false;
-	std::string url = mallob_endpoint + "/api/v2/mallob/miner/?method="+method;
-	for (int i=0; i<params.size(); i++) url = url + "&" + params[i];
-	if (mallob_debug) Log << TEXT_CYAN << url << TEXT_DEFAULT << std::endl;
-	CURLcode res;
-	struct curl_slist *list = NULL; //header list
-	std::string readBuffer;
-	// header:
-	list = curl_slist_append(list, "Accept: application/json");
-	list = curl_slist_append(list, "Content-type: application/json");
-	// retrieve:
-	curl = curl_easy_init();
-	if (curl) {
-		curl_easy_setopt(curl, CURLOPT_URL, url.c_str() );
-		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout);
-		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-		res = curl_easy_perform(curl);
-		curl_easy_cleanup(curl);
-		if(res != CURLE_OK) {
-			LogTS << TEXT_YELLOW << "[MALLOB] ERROR: " << curl_easy_strerror(res) << TEXT_DEFAULT << std::endl;
-		} else {
-			if (mallob_debug) Log << TEXT_YELLOW << readBuffer << TEXT_DEFAULT << std::endl;
-			if (retval.parse(readBuffer) && retval.has<jsonxx::Boolean>("status")) {
-				ret = retval.get<jsonxx::Boolean>("status");
-				if (ret && retval.has<jsonxx::Object>("data")) {
-					jsonxx::Object data = retval.get<jsonxx::Object>("data");
-					retval = data;
+
+	bool resultok = false;
+	int trycnt = 0;
+	while (!resultok && trycnt < 25) {
+
+		bool ret = false;
+		std::string url = mallob_endpoint + "/api/v2/mallob/miner/?method="+method;
+		for (int i=0; i<params.size(); i++) url = url + "&" + params[i];
+		if (mallob_debug) Log << TEXT_CYAN << url << TEXT_DEFAULT << std::endl;
+		CURLcode res;
+		struct curl_slist *list = NULL; //header list
+		std::string readBuffer;
+		// header:
+		list = curl_slist_append(list, "Accept: application/json");
+		list = curl_slist_append(list, "Content-type: application/json");
+		// retrieve:
+		curl = curl_easy_init();
+		if (curl) {
+			curl_easy_setopt(curl, CURLOPT_URL, url.c_str() );
+			curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout);
+			curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+			res = curl_easy_perform(curl);
+			curl_easy_cleanup(curl);
+			if(res != CURLE_OK) {
+				//LogTS << TEXT_YELLOW << "[MALLOB] ERROR: " << curl_easy_strerror(res) << TEXT_DEFAULT << std::endl;
+				if (trycnt==0) LogTS << "[MALLOB] CONNECTING TO MALLOB..." << std::endl;
+				trycnt++;
+				std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+			} else {
+				if (mallob_debug) Log << TEXT_YELLOW << readBuffer << TEXT_DEFAULT << std::endl;
+				if (retval.parse(readBuffer) && retval.has<jsonxx::Boolean>("status")) {
+					ret = retval.get<jsonxx::Boolean>("status");
+					if (ret && retval.has<jsonxx::Object>("data")) {
+						jsonxx::Object data = retval.get<jsonxx::Object>("data");
+						retval = data;
+					}
+					if (retval.has<jsonxx::String>("error")) {
+						LogTS << TEXT_RED << "[MALLOB] ERROR: " << retval.get<jsonxx::String>("error") << TEXT_DEFAULT << std::endl;
+						
+					}
+					resultok = true;
+				} else {//if (!mallob_debug) {
+					//LogTS << TEXT_RED << "[MALLOB] ERROR: " << readBuffer << TEXT_DEFAULT << std::endl;
+					if (trycnt==0) LogTS << "[MALLOB] CONNECTING TO MALLOB..." << std::endl;
+					trycnt++;
+					std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+					
 				}
-				if (retval.has<jsonxx::String>("error")) {
-					LogTS << TEXT_RED << "[MALLOB] ERROR: " << retval.get<jsonxx::String>("error") << TEXT_DEFAULT << std::endl;
-				}
-			} else if (!mallob_debug) {
-				LogTS << TEXT_RED << "[MALLOB] ERROR: " << readBuffer << TEXT_DEFAULT << std::endl;
 			}
 		}
-	}
-	if (!retval.has<jsonxx::Boolean>("result")) {
-		retval << "result" << ret;
+		if (!retval.has<jsonxx::Boolean>("result")) {
+			retval << "result" << ret;
+		}
 	}
 	//if (mallob_debug) Log << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
 	return retval;
@@ -963,6 +953,7 @@ __device__ __forceinline__ bool new_units_contains(const int _Xk, const bool* ne
 }
 __device__ __forceinline__ int Opposite(const int k, const int n) {
 	return (k > n) ? (k - n) : (k + n);
+	
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1970,7 +1961,7 @@ void read_states(int dev) {
 		return;
 	}
 	Log << "DONE" << std::endl;
-	LogTS << "[GPU " << dev << "] INITITALIZED" << std::endl;
+	LogTS << "[GPU " << dev << "] INITIALIZED" << std::endl;
 
 	// now read the data:
 	// host data:
@@ -2046,8 +2037,7 @@ void read_states(int dev) {
 	return;
 }
 
-int init_states(int dev, int maximum_jobs) {
-	int device_id = dev;
+int init_states(int device_id, int maximum_jobs) {
 	// new work, initiate state and load to GPU -----------------------------------------------------------------------------
 	// base:
 	uint64_cu mem_req = 0; //1024 * 1024 * 1024; // OS
@@ -2274,7 +2264,7 @@ int init_states(int dev, int maximum_jobs) {
 			return 0;
 		}
 		Log << "DONE" << std::endl;
-		LogTS << TEXT_SILVER << "[GPU " << device_id << "] INITITALIZED" << TEXT_DEFAULT << std::endl;
+		LogTS << TEXT_SILVER << "[GPU " << device_id << "] INITIALIZED" << TEXT_DEFAULT << std::endl;
 		/// --------------------------------------------------------------------------------------------------------------
 	}
 
@@ -2298,9 +2288,7 @@ int init_states(int dev, int maximum_jobs) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-bool gpu_speed(float*& miner_hashrate, cudaEvent_t *& start, cudaEvent_t *& stop) {
-
-	int device_id = 0;
+bool gpu_speed(float*& miner_hashrate, cudaEvent_t *& start, cudaEvent_t *& stop, int device_id) {
 
 	for (int dev = 0; dev < nDevices; dev++) {
 		if (use_multi_gpu) device_id = dev;
@@ -2308,8 +2296,8 @@ bool gpu_speed(float*& miner_hashrate, cudaEvent_t *& start, cudaEvent_t *& stop
 		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(250));
 			gpuErrchk(cudaSetDevice(device_id));
-			cudaEventCreate(&start[dev]);
-			cudaEventCreate(&stop[dev]);
+			//cudaEventCreate(&start[dev]);
+			//cudaEventCreate(&stop[dev]);
 			LogTS << "[GPU " << device_id << "] PEAK PERFORMANCE: " ;
 			gpuErrchk(cudaEventRecord(start[dev]));
 			test_flops<<<1,1>>>(10000000);
@@ -2505,11 +2493,22 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	cudaEvent_t *start = new cudaEvent_t[nDevices];
 	cudaEvent_t *stop  = new cudaEvent_t[nDevices];
 
+	for (int dev = 0; dev < nDevices; dev++) {
+		if (use_multi_gpu) device_id = dev;
+		// only not disabled gpus:
+		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
+			gpuErrchk(cudaSetDevice(device_id));
+			cudaEventCreate(&start[dev]);
+			cudaEventCreate(&stop[dev]);
+		}
+	}
+
 	// peak performance -------------------------------------------------------------------------------------------------------------------------------
 	float* miner_hashrate = new float[nDevices];
 	for (int i = 0; i < nDevices; i++) miner_hashrate[i] = 0;
 
-	if (!gpu_speed(miner_hashrate, start, stop)) return false;
+	//if (!gpu_speed(miner_hashrate, start, stop)) return false;
+	if (!gpu_speed(miner_hashrate, start, stop, device_id)) return false;
 
 	uint64_cu max_complexity = std::numeric_limits<uint64_t>::max(); //pow(n, 6)*nDevices;
 	uint64_cu steps_per_run = steps_per_batch;
@@ -2777,7 +2776,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		
 		if (!testing && count_batches % 10 == 0) {
 			/// GPU probe:
-			if (!gpu_speed(miner_hashrate, start, stop)) return false;
+			if (!gpu_speed(miner_hashrate, start, stop, device_id)) return false;
 		}
 		
 		auto t6 = std::chrono::high_resolution_clock::now();
@@ -2820,11 +2819,13 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		*/
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-		auto t4 = std::chrono::high_resolution_clock::now();
-		float passed = std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count();
-		t3 = t4;
-		uint64_cu leffom = miner_hashrate_all / miner_milliseconds_all * (passed / 1000.0) * 60;
-		if (!testing) dynexservice.leffom += leffom;
+		if (count_batches>1) {
+			auto t4 = std::chrono::high_resolution_clock::now();
+			float passed = std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count();
+			t3 = t4;
+			uint64_cu leffom = miner_hashrate_all / miner_milliseconds_all * (passed / 1000.0) * 60;
+			if (!testing) dynexservice.leffom += leffom;
+		}
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 		/// looped kernel start:
@@ -3101,10 +3102,8 @@ int main(int argc, char** argv) {
 
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 
-	signal(SIGINT, signalHandler);
-
 	LogTS << "[INFO] ---------------------------------------------------------" << std::endl;
-	LogTS << TEXT_SILVER << "[INFO] DynexSolve v" << VERSION << " | Meaningful Mining " << TEXT_DEFAULT << std::endl;
+	LogTS << TEXT_SILVER << "[INFO] DynexSolve v" << VERSION << "(" << REVISION << ") | Meaningful Mining " << TEXT_DEFAULT << std::endl;
 	LogTS << "[INFO] ---------------------------------------------------------" << std::endl;
 
 	// parse command line options:
@@ -3392,6 +3391,7 @@ int main(int argc, char** argv) {
 	}
 
 	// ------------------------------------ end command line parameters --------------------------------------------------------------------
+	if (!SKIP) signal(SIGINT, signalHandler);
 
 	// single or multi gpu?:
 	cudaGetDeviceCount(&nDevices);
