@@ -687,18 +687,18 @@ class dynex_hasher_thread_obj {
 							}
 						} else {
 							// STRATUM:
+							/*
 							// work still valid?
 							std::string rem_job_id = H_STRATUM_JOB_ID;
 							stratum_getjob();
 							std::this_thread::sleep_for(std::chrono::milliseconds(100));
 							LogTS << "[STRATUM] VALIDATING JOB ID: " << rem_job_id << "/" << H_STRATUM_JOB_ID << std::endl;
 							if (rem_job_id==H_STRATUM_JOB_ID) {
+							*/
 								// stratum submit:
 								LogTS << "[STRATUM] SUBMITTING PoW: " << H_POW << " NONCE " << nonce_hex << " DIFF " << H_POW_DIFF << std::endl;
 								stratum_submit_solution(nonce_hex, H_POW);	
-							} /*else {
-								LogTS << TEXT_RED << "[STRATUM] Stale share" << TEXT_DEFAULT << std::endl;
-							}*/
+							//} 
 						}
 						updatetemplate = true;
 					}
