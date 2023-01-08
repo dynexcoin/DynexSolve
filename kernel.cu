@@ -94,7 +94,7 @@ typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
 std::string VERSION = "2.2.2";
-std::string REVISION = "b";
+std::string REVISION = "c";
 std::string mallob_endpoint = "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
 
 #define MAX_ATOMIC_ERR  15 //25
@@ -1623,7 +1623,7 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 			for (int i = 1; i <= 2 * n; i++) {
 				if (lambda_contains(d_jobs[threadi].Xk, d_jobs[threadi].lambda_bin) || lambda_contains(Opposite(d_jobs[threadi].Xk, n), d_jobs[threadi].lambda_bin)) {
 					d_jobs[threadi].Xk = d_jobs[threadi].Xk % (2 * n) + 1;
-					d_jobs[threadi].complexity_counter += 4;
+					d_jobs[threadi].complexity_counter += 4; increment_complexity(d_jobs[threadi]);
 				}
 				else {
 					break;
@@ -1631,7 +1631,7 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 			}
 
 			set_lambda(d_jobs[threadi].Xk, d_jobs[threadi]);
-			d_jobs[threadi].complexity_counter++;
+			d_jobs[threadi].complexity_counter++; increment_complexity(d_jobs[threadi]);
 
 			// calling the main execution block:
 			d_jobs[threadi] = GetAllUnits(d_jobs[threadi], d_adj_opp, d_adj_opp_sizes);
@@ -1641,14 +1641,14 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 			{
 				lambda_remove(d_jobs[threadi].Xk, d_jobs[threadi]); //lambda.Remove(Xk);
 				d_jobs[threadi].Xk = Opposite(d_jobs[threadi].Xk, n);
-				d_jobs[threadi].complexity_counter += 2;
+				d_jobs[threadi].complexity_counter += 2; increment_complexity(d_jobs[threadi]);
 				d_jobs[threadi].flipped = !d_jobs[threadi].flipped;
 				if (d_jobs[threadi].flipped)
 				{
 					if (d_jobs[threadi].lambda_pos > 0)
 						lambda_remove_last(d_jobs[threadi]); //lambda.Remove(lambda.Last());
 
-					d_jobs[threadi].complexity_counter++;
+					d_jobs[threadi].complexity_counter++; increment_complexity(d_jobs[threadi]);
 				}
 			}
 			else
@@ -2601,6 +2601,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	int 		h_lambda_dev_best = -1;
 	int 		rem_lambda[16];
 	uint64_cu 	count_batches = 0;
+	std::vector<uint64_cu>       average_pouw_diff;
 
 	while (h_solved_all == 0 && h_total_steps_all < max_complexity && !dynex_quit_flag) {
 
@@ -2712,6 +2713,18 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		POUW_JOB = std::to_string(JOB_ID);
 		
 		// DEBUG ROUTINE: ****************************************************************************************************
+		/*
+		average_pouw_diff.push_back(GPU_DIFF);
+		uint64_cu n1 = 0;
+	    double mean = 0.0;
+	    for (auto x1 : average_pouw_diff) {
+	        double delta = x1 - mean;
+	        mean += delta/++n1;
+	    }
+	    double per_chip = mean / 10000 / (double)num_jobs_all;
+		std::cout << "GPU_DIFF = " << GPU_DIFF << " AVERAGE POUW_DIFF = " << std::fixed << mean << " perchip = " << per_chip << std::endl;
+		*/
+		
 		/*
 		std::cout << POUW_BLOB << " => " << POUW_HASH << " (diff: " << POUW_DIFF << " job: " << POUW_JOB << ")" <<std::endl;
 		

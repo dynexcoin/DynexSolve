@@ -4,6 +4,10 @@ Mining software supporting algo DynexSolve. Currently supporting CUDA
 Requirements:
 - libcurl (Ubuntu: sudo apt install curl)
 
+# DynexSolve v.2.2.2(c) Release Notes
+* Fixed rejected shares err#499 - stale shares 
+* Improved Stratum protocol performance
+
 # DynexSolve v.2.2.2(b) Release Notes
 * Improved mallob connectivity
 * Eliminated first share reject
