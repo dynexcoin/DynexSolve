@@ -94,7 +94,7 @@ typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
 std::string VERSION = "2.2.2";
-std::string REVISION = "c";
+std::string REVISION = "d";
 std::string mallob_endpoint = "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
 
 #define MAX_ATOMIC_ERR  15 //25
@@ -2754,6 +2754,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 			}
 		}
 		*/
+		
 		// *******************************************************************************************************************
 		
 		//std::cout << "DEBUG: state_hash = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_hash[0] << " state_nonce = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_nonce[0];

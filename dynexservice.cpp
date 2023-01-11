@@ -97,6 +97,8 @@ static std::string POUW_HASH = "";
 static std::string POUW_DIFF = "";
 static std::string POUW_JOB = "";
 
+static uint32_t H_NONCE = 0;
+
 // block_template: ----------------------------------------------------------------------------------------
 typedef struct {
 	std::string blockhashing_blob;
@@ -470,6 +472,12 @@ class dynex_hasher_thread_obj {
 					return false;
 				}
 
+				// #499 stale share fix (some pools return multiple jobs, only last one is valid)
+				std::stringstream returned_ss(returned);
+				for (std::string line; std::getline(returned_ss, line, '\n');)
+						returned = line;
+				// ---
+
 				jsonxx::Object retval_json;
 				joined.append(returned);
 				if (!retval_json.parse(joined)) {
@@ -615,6 +623,8 @@ class dynex_hasher_thread_obj {
 			std::mt19937 gen(rd());
 			std::uniform_int_distribution<uint32_t> dis;
 
+			if (H_NONCE==0) H_NONCE = dis(gen); // initial nonce = random;
+
 			block_template bt;
 			//block_header bh;
 
@@ -662,8 +672,9 @@ class dynex_hasher_thread_obj {
 					}
 
 					// check a chash
-					uint32_t nonce = dis(gen);
+					uint32_t nonce = H_NONCE; //dis(gen);
 					bool found = try_hash(nonce, false);
+					H_NONCE++; if (H_NONCE>=4294967294) H_NONCE = 0; // nonce increases
 
 					// block found?
 					if (found) {
