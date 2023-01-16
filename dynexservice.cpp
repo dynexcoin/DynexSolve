@@ -85,6 +85,7 @@ static std::string H_MALLOB_NETWORK_ID = "";
 static uint64_t    H_DIFF = 0;
 static uint64_t    H_POW_DIFF = 0;
 static std::string H_POW = "";
+static uint32_t    H_NONCE = 0;
 static uint8_t     H_BLOB[256] = {0}; // 76
 static size_t      H_BLOB_SIZE = 0;
 static stlplus::TCP_client stratumclient;
@@ -97,7 +98,7 @@ static std::string POUW_HASH = "";
 static std::string POUW_DIFF = "";
 static std::string POUW_JOB = "";
 
-static uint32_t H_NONCE = 0;
+static int H_STRATUM_INTERVAL = 100;
 
 // block_template: ----------------------------------------------------------------------------------------
 typedef struct {
@@ -126,21 +127,6 @@ typedef struct {
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// HELPER FUNCTIONS
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// convert 8 x uint8_t to uint64_t hex
-static inline uint64_t bytesToInt64(uint8_t bytes[8])
-{
-   uint64_t v = 0;
-   v |= bytes[0]; v <<= 8;
-   v |= bytes[1]; v <<= 8;
-   v |= bytes[2]; v <<= 8;
-   v |= bytes[3]; v <<= 8;
-   v |= bytes[4]; v <<= 8;
-   v |= bytes[5]; v <<= 8;
-   v |= bytes[6]; v <<= 8;
-   v |= bytes[7];
-   return v;
-}
-
 // convert string to uint8_t:
 static inline void convert(const char *s, uint8_t * out, int maxsize) {
 	int i = 0;
@@ -151,41 +137,6 @@ static inline void convert(const char *s, uint8_t * out, int maxsize) {
 	}
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// bit functions
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-static inline uint64_t swap64(uint64_t x) {
-  x = ((x & 0x00ff00ff00ff00ff) <<  8) | ((x & 0xff00ff00ff00ff00) >>  8);
-  x = ((x & 0x0000ffff0000ffff) << 16) | ((x & 0xffff0000ffff0000) >> 16);
-  return (x << 32) | (x >> 32);
-}
-#define swap64le swap64 //ident64
-static inline uint64_t hi_dword(uint64_t val) {return val >> 32;}
-static inline uint64_t lo_dword(uint64_t val) {return val & 0xFFFFFFFF;}
-static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi) {
-  uint64_t a = hi_dword(multiplier);
-  uint64_t b = lo_dword(multiplier);
-  uint64_t c = hi_dword(multiplicand);
-  uint64_t d = lo_dword(multiplicand);
-  uint64_t ac = a * c;
-  uint64_t ad = a * d;
-  uint64_t bc = b * c;
-  uint64_t bd = b * d;
-  uint64_t adbc = ad + bc;
-  uint64_t adbc_carry = adbc < ad ? 1 : 0;
-  uint64_t product_lo = bd + (adbc << 32);
-  uint64_t product_lo_carry = product_lo < bd ? 1 : 0;
-  *product_hi = ac + (adbc >> 32) + (adbc_carry << 32) + product_lo_carry;
-  assert(ac <= *product_hi);
-  return product_lo;
-}
-
-static inline void mul(uint64_t a, uint64_t b, uint64_t &low, uint64_t &high) {low = mul128(a, b, &high);}
-static inline uint64_t ident64(uint64_t x) { return x; }
-static inline bool cadd(uint64_t a, uint64_t b) {return a + b < a;}
-static inline bool cadc(uint64_t a, uint64_t b, bool c) {return a + b < a || (c && a + b == (uint64_t) -1);}
-
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Dynex Service Class
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -193,8 +144,6 @@ static inline bool cadc(uint64_t a, uint64_t b, bool c) {return a + b < a || (c 
 class dynex_hasher_thread_obj {
 
 	public:
-		int id = 0;
-		std::vector<int> pending;
 
 		// operator function --------------------------------------------------------------------------------------------
 		void operator()(int thread_id, uint64_t& leffom, std::atomic<bool>& hasher_quit_flag, std::string daemon_host, std::string daemon_port, CURL* curl, std::string address, int reserve_size)
@@ -205,25 +154,15 @@ class dynex_hasher_thread_obj {
 		// ---------------------------------------------------------------------------------------------------------------
 
 	private:
+		int id = 0;
+		std::vector<int> pending;
+		std::string buffer = "";
+		uint64_t recvcounter = 0;
+
 		// curl return value function:
 		static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp){
 			((std::string*)userp)->append((char*)contents, size * nmemb);
 			return size * nmemb;
-		}
-
-		// check difficulty
-		bool check_hash(const uint64_t* hash, const uint64_t difficulty) {
-			uint64_t low, high, top, cur;
-			mul(swap64le(hash[3]), difficulty, top, high);
-			if (high != 0) { return false; }
-			mul(swap64le(hash[0]), difficulty, low, cur);
-			mul(swap64le(hash[1]), difficulty, low, high);
-			bool carry = cadd(cur, low);
-			cur = high;
-			mul(swap64le(hash[2]), difficulty, low, high);
-			carry = cadc(cur, low, carry);
-			carry = cadc(high, top, carry);
-			return !carry;
 		}
 
 		// try_hash: ----------------------------------------------------------------------------------------
@@ -246,25 +185,10 @@ class dynex_hasher_thread_obj {
 			uint8_t hash[32];
 			cn_slow_hash(H_BLOB, H_BLOB_SIZE, hash);
 
-			// hash -> hash_64 (uint64):
-			uint64_t hash64[4]; int hashpos = 0;
-			#pragma unroll
-			for (int i=0; i < 32; i = i + 8) {
-				uint8_t bytes[8];
-				#pragma unroll
-				for (int ii=0; ii<8; ii++) bytes[ii] = hash[i+ii];
-				hash64[hashpos] = bytesToInt64(bytes);
-				hashpos++;
-			}
-
-			if (logging) {
-				std::cout << "OUTPUT (HEX uint64_t): ";
-				for (int i=0; i< 4; i++) std::cout << std::hex << std::setw(16) << std::setfill('0') << hash64[i];
-				std::cout << std::endl;
-			}
+			H_POW_DIFF = *(uint32_t*)&hash[28] ? (uint64_t)(4294967295 / *(uint32_t*)&hash[28]) : 4294967296;
 
 			// nonce found?
-			if (check_hash(hash64, H_DIFF)) {
+			if (H_POW_DIFF >= H_DIFF) {
 				//std::cout << " debug: check_hash " << outhash << " with difficulty " << difficulty << " result: TRUE" << std::endl;
 				// convert output hash to std::string:
 				std::stringstream _outhash; _outhash << std::hex << std::setfill('0');
@@ -273,7 +197,6 @@ class dynex_hasher_thread_obj {
 				if (logging) std::cout << "OUTPUT (std::string) : " << outhash << std::endl;
 				if (H_stratum) {
 					H_POW = outhash; // stratum needs proof of work
-					H_POW_DIFF = (uint64_t)(4294967296. / *(uint32_t*)&hash[28]);
 				}
 				return true;
 			}
@@ -399,16 +322,23 @@ class dynex_hasher_thread_obj {
 						return true;
 					}
 				}
-
 			}
 
 			return false;
+		}
+
+		uint32_t gen_nonce() {
+			static std::random_device rd;
+			static std::mt19937 gen(rd());
+			static std::uniform_int_distribution<uint32_t> dis;
+			return dis(gen);
 		}
 
 		// Stratum: login ----------------------------------------------------------------------------------------------
 		bool stratum_login() {
 			static bool wait = false;
 			id = 0;
+			buffer = "";
 			pending.clear();
 			H_DIFF = 0; // stop hashing
 			//accepted_cnt = 0;
@@ -454,8 +384,84 @@ class dynex_hasher_thread_obj {
 			return stratum_recv(1);
 		}
 
+		// Stratum: parse ---------------------------------------------------------------------------------------------
+		bool stratum_parse(std::string input) {
+			//LogTS << "[STRATUM] PARSE: " << input << std::endl;
+
+			jsonxx::Object retval_json;
+			if (!retval_json.parse(input)) {
+				int size = buffer.size();
+				buffer.append(input);
+				if (!size) return true;
+				if (!retval_json.parse(buffer)) {
+					LogTS << "[STRATUM] JSON PARSE ERROR: " << buffer << std::endl;
+					buffer = input;
+					return true;
+				}
+				buffer = "";
+			}
+			if (buffer != "") {
+				LogTS << "[STRATUM] JSON PARSE ERROR: " << buffer << std::endl;
+				buffer = "";
+			}
+
+			int retval_id = retval_json.has<jsonxx::Number>("id")?retval_json.get<jsonxx::Number>("id"):0;
+			auto share = std::find(pending.begin(), pending.end(), retval_id);
+
+			if (retval_json.has<jsonxx::Object>("error")) {
+				if (share != pending.end()) {
+					pending.erase(share);
+					rejected_cnt++;
+					LogTS << "[STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON: " << stratum_geterror(retval_json) << TEXT_DEFAULT << std::endl;
+					// last share
+					if (id == retval_id) {
+						// assume pending shares are lost so count them as rejected
+						if (pending.size()) {
+							rejected_cnt += pending.size();
+							pending.clear();
+							LogTS << "[STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH NO REPLY" << TEXT_DEFAULT << std::endl;
+						}
+						return stratum_getjob(); // force job update
+					}
+				} else {
+					LogTS << TEXT_RED << "[STRATUM] ERROR: " << stratum_geterror(retval_json) << TEXT_DEFAULT << std::endl;
+					if (id == retval_id && id > 1) {
+						stratum_login();
+						return false;
+					}
+				}
+			} else if (retval_json.has<jsonxx::Object>("params")) {
+				// getjob answer
+				return stratum_newjob(retval_json.get<jsonxx::Object>("params"));
+			} else if (retval_json.has<jsonxx::Object>("result")) {
+				if (retval_json.get<jsonxx::Object>("result").has<jsonxx::Object>("job")) {
+					LogTS << TEXT_SILVER << "[STRATUM] AUTHORIZED" << TEXT_DEFAULT << std::endl;
+					stratum_newjob(retval_json.get<jsonxx::Object>("result").get<jsonxx::Object>("job"));
+				} else if (share != pending.end()) {
+					pending.erase(share);
+					accepted_cnt++;
+					LogTS << "[STRATUM] " << TEXT_GREEN << "SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
+					// last share
+					if (id == retval_id) {
+						// assume pending shares are lost so count them as rejected
+						if (pending.size()) {
+							rejected_cnt += pending.size();
+							pending.clear();
+							LogTS << "[STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH NO REPLY" << TEXT_DEFAULT << std::endl;
+						}
+					}
+				} else {
+					stratum_newjob(retval_json.get<jsonxx::Object>("result"));
+				}
+			} else {
+				LogTS << "[STRATUM] UNKNOWN: " << retval_json.json() << std::endl;
+			}
+			return true;
+		}
+
 		// Stratum: recv ---------------------------------------------------------------------------------------------
 		bool stratum_recv(int wait) {
+			recvcounter = hashcounter;
 			// stratumclient active?
 			if (!stratumclient.initialised()) {
 				LogTS << "[STRATUM] connection has closed, reconnecting..." << std::endl;
@@ -463,8 +469,7 @@ class dynex_hasher_thread_obj {
 				return false;
 			}
 
-			std::string joined = "";
-			while (stratumclient.receive_ready(wait?2000000:200)) {
+			while (stratumclient.receive_ready(wait?2000000:1)) {
 				std::string returned = "";
 				if (!stratumclient.receive(returned)) {
 					LogTS << "[STRATUM] receive failed" << std::endl;
@@ -472,65 +477,21 @@ class dynex_hasher_thread_obj {
 					return false;
 				}
 
+				//LogTS << "[STRATUM] RECV: " << returned << std::endl;
+				//std::cout << "---------------------------------------------------------------------------------" << std::endl;
+				//std::cout << "H_STRATUM_INTERVAL = " << H_STRATUM_INTERVAL << std::endl;
+				//std::cout << TEXT_GREEN << returned << TEXT_DEFAULT << std::endl;
+				//std::cout << "---------------------------------------------------------------------------------" << std::endl;
+
 				// #499 stale share fix (some pools return multiple jobs, only last one is valid)
 				std::stringstream returned_ss(returned);
-				for (std::string line; std::getline(returned_ss, line, '\n');)
-						returned = line;
-				// ---
-
-				jsonxx::Object retval_json;
-				joined.append(returned);
-				if (!retval_json.parse(joined)) {
-					LogTS << "[STRATUM] JSON PARSE ERROR: " << joined << std::endl;
-					continue;
-				}
-
-				//LogTS << "[STRATUM] RECV: " << joined << std::endl;
-				joined = ""; // clear
-
-				int retval_id = retval_json.has<jsonxx::Number>("id")?retval_json.get<jsonxx::Number>("id"):0;
-				auto share = std::find(pending.begin(), pending.end(), retval_id);
-
-				if (retval_json.has<jsonxx::Object>("error")) {
-					if (share != pending.end()) {
-						pending.erase(share);
-						rejected_cnt++;
-						LogTS << "[STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ") WITH REASON: " << stratum_geterror(retval_json) << TEXT_DEFAULT << std::endl;
-						// last share
-						if (id == retval_id) {
-							// assume pending shares are lost so count them as rejected
-							if (pending.size()) {
-								rejected_cnt += pending.size();
-								pending.clear();
-								LogTS << "[STRATUM] " << TEXT_RED << "SHARE REJECTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
-							}
-							return stratum_getjob(); // force job update
-						}
-					} else {
-						LogTS << TEXT_RED << "[STRATUM] ERROR: " << stratum_geterror(retval_json) << TEXT_DEFAULT << std::endl;
-						if (id == retval_id && id > 1) {
-							return stratum_login();
-						}
-					}
-				} else if (retval_json.has<jsonxx::Object>("params")) {
-					// getjob answer
-					return stratum_newjob(retval_json.get<jsonxx::Object>("params"));
-				} else if (retval_json.has<jsonxx::Object>("result")) {
-					if (retval_json.get<jsonxx::Object>("result").has<jsonxx::Object>("job")) {
-						LogTS << TEXT_SILVER << "[STRATUM] AUTHORIZED" << TEXT_DEFAULT << std::endl;
-						return stratum_newjob(retval_json.get<jsonxx::Object>("result").get<jsonxx::Object>("job"));
-					} else if (share != pending.end()) {
-						pending.erase(share);
-						accepted_cnt++;
-						LogTS << "[STRATUM] " << TEXT_GREEN << "SHARE ACCEPTED BY POOL (" << accepted_cnt << "/" << rejected_cnt << ")" << TEXT_DEFAULT << std::endl;
-					} else {
-						return stratum_newjob(retval_json.get<jsonxx::Object>("result"));
-					}
-				} else {
-					LogTS << "[STRATUM] UNKNOWN: " << retval_json.json() << std::endl;
+				for (std::string line; std::getline(returned_ss, line, '\n');) {
+					//std::cout << TEXT_RED << "PARSED: " << line << TEXT_DEFAULT << std::endl;
+					if (!stratum_parse(line))
+						return false;
 				}
 			}
-			return false;
+			return true;
 		}
 
 		// Stratum: getjob ---------------------------------------------------------------------------------------------
@@ -563,6 +524,7 @@ class dynex_hasher_thread_obj {
 			}
 
 			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(++id) + ",\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve\",\"mallob\":\""+H_MALLOB_NETWORK_ID+"\",\"POUW_JOB\":\""+POUW_JOB+"\",\"POUW_BLOB\":\""+POUW_BLOB+"\",\"POUW_HASH\":\""+POUW_HASH+"\",\"POUW_DIFF\":\""+POUW_DIFF+"\"}}\n";
+			LogTS << "[STRATUM] SUBMITTING PoW: " << H_POW << " NONCE " << found_nonce << " DIFF " << H_POW_DIFF << std::endl;
 
 			//std::cout << COMMAND_SUBMIT << std::endl;
 			if (!stratumclient.send(COMMAND_SUBMIT)) {
@@ -594,7 +556,6 @@ class dynex_hasher_thread_obj {
 			}
 
 			//LogTS << "[STRATUM] " << "JOB: " << obj.json() << std::endl;
-
 			H_STRATUM_JOB_ID = obj.get<jsonxx::String>("job_id");
 			H_STRATUM_ID = obj.get<jsonxx::String>("id");
 			H_STRATUM_TARGET = obj.get<jsonxx::String>("target");
@@ -618,17 +579,11 @@ class dynex_hasher_thread_obj {
 		// thread runner -----------------------------------------------------------------------------------------------------------
 		bool hasher_work(int threadnum, uint64_t& leffom, std::atomic<bool>& hasher_quit_flag, std::string daemon_host, std::string daemon_port, CURL* curl, std::string address, int reserve_size) {
 
-			// init random generator:
-			std::random_device rd;
-			std::mt19937 gen(rd());
-			std::uniform_int_distribution<uint32_t> dis;
-
-			if (H_NONCE==0) H_NONCE = dis(gen); // initial nonce = random;
-
 			block_template bt;
 			//block_header bh;
 
 			H_DIFF = 0;
+			H_NONCE = gen_nonce();
 
 			while (!leffom && !hasher_quit_flag) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -647,7 +602,7 @@ class dynex_hasher_thread_obj {
 				// is there work?
 				while (leffom > 0) {
 					// check for new blocktemplate?
-					if (updatetemplate || hashcounter % 50 == 0 || H_DIFF == 0) { // check every x hashes if still valid
+					if (updatetemplate || hashcounter - recvcounter > H_STRATUM_INTERVAL || H_DIFF == 0) { // check every x hashes if still valid
 						if (!H_stratum) {
 							// last blockheader:
 							bt = get_blocktemplate(address, reserve_size, daemon_host, daemon_port, curl);
@@ -656,12 +611,13 @@ class dynex_hasher_thread_obj {
 							// convert hex blob to uint8_t
 							convert(bt.blockhashing_blob.c_str(), H_BLOB, H_BLOB_SIZE);
 							//bh = getlastblockheader(daemon_host, daemon_port, curl);
+							H_NONCE = gen_nonce();
 						} else {
 							//stratum:
 							stratum_recv(0);
 							if (!H_DIFF) {
 								stratum_getjob();
-							} 
+							}
 						}
 						if (!H_DIFF) {
 							LogTS << "[STRATUM] NO JOB, WAITING " << std::endl;
@@ -672,16 +628,14 @@ class dynex_hasher_thread_obj {
 					}
 
 					// check a chash
-					uint32_t nonce = H_NONCE; //dis(gen);
-					bool found = try_hash(nonce, false);
-					H_NONCE++; if (H_NONCE>=4294967294) H_NONCE = 0; // nonce increases
+					bool found = try_hash(H_NONCE, false);
 
 					// block found?
 					if (found) {
 						//std::cout << "Nonce found: " << nonce << std::endl;
 						// convert nonce to hex:
 						std::stringstream ss;
-						ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(__builtin_bswap32(nonce));
+						ss << std::hex << std::setfill('0') << std::setw(sizeof(uint64_t)) << static_cast<int>(__builtin_bswap32(H_NONCE));
 						std::string nonce_hex = ss.str();
 						if (!H_stratum) {
 							// add nonce into blocktemplate_blob:
@@ -697,23 +651,14 @@ class dynex_hasher_thread_obj {
 								LogTS << "[BLOCKCHAIN] Block found but not accepted from node (" << accepted_cnt << "/" << rejected_cnt << ")" << std::endl;
 							}
 						} else {
-							// STRATUM:
-							/*
-							// work still valid?
-							std::string rem_job_id = H_STRATUM_JOB_ID;
-							stratum_getjob();
-							std::this_thread::sleep_for(std::chrono::milliseconds(100));
-							LogTS << "[STRATUM] VALIDATING JOB ID: " << rem_job_id << "/" << H_STRATUM_JOB_ID << std::endl;
-							if (rem_job_id==H_STRATUM_JOB_ID) {
-							*/
-								// stratum submit:
-								LogTS << "[STRATUM] SUBMITTING PoW: " << H_POW << " NONCE " << nonce_hex << " DIFF " << H_POW_DIFF << std::endl;
-								stratum_submit_solution(nonce_hex, H_POW);	
-							//} 
+							// stratum submit:
+							stratum_submit_solution(nonce_hex, H_POW);
 						}
 						updatetemplate = true;
 					}
 
+					H_NONCE++;
+					if (H_NONCE > 4294967295) H_NONCE = 0; // avoid overflow error
 					hashcounter++;
 					leffom--;
 					if (leffom == 0) {

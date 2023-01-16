@@ -3,6 +3,8 @@
 
 #include <string>
 #include <sstream>
+#include <iomanip>
+#include <ctime>
 
 // Dynex colors
 #ifdef WIN32
@@ -28,8 +30,10 @@
 #endif
 
 
-#define Log   Logger{false}
-#define LogTS Logger{true}
+#define Log    Logger{false}
+#define LogTS  Logger{true}
+#define LogR   Logger{false, "\r"}
+#define LogRTS Logger{true, "\r"}
 
 
 class Logger {
@@ -37,7 +41,8 @@ class Logger {
 		std::ostringstream ss;
 
 	public:
-		Logger(bool timestamp = true) {
+		Logger(bool timestamp = true, const char *str = NULL) {
+			if (str) ss << str;
 			if (timestamp) {
 				auto t = std::time(nullptr);
 				auto tm = *std::localtime(&t);
