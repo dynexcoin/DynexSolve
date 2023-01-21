@@ -523,7 +523,7 @@ class dynex_hasher_thread_obj {
 				return false;
 			}
 
-			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(++id) + ",\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve\",\"mallob\":\""+H_MALLOB_NETWORK_ID+"\",\"POUW_JOB\":\""+POUW_JOB+"\",\"POUW_BLOB\":\""+POUW_BLOB+"\",\"POUW_HASH\":\""+POUW_HASH+"\",\"POUW_DIFF\":\""+POUW_DIFF+"\"}}\n";
+			std::string COMMAND_SUBMIT = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(++id) + ",\"method\":\"submit\",\"params\":{\"id\":\""+H_STRATUM_ID+"\",\"job_id\":\""+H_STRATUM_JOB_ID+"\",\"nonce\":\""+found_nonce+"\",\"result\":\""+found_hash+"\",\"algo\":\"dynexsolve223\",\"mallob\":\""+H_MALLOB_NETWORK_ID+"\",\"POUW_JOB\":\""+POUW_JOB+"\",\"POUW_BLOB\":\""+POUW_BLOB+"\",\"POUW_HASH\":\""+POUW_HASH+"\",\"POUW_DIFF\":\""+POUW_DIFF+"\"}}\n";
 			LogTS << "[STRATUM] SUBMITTING PoW: " << H_POW << " NONCE " << found_nonce << " DIFF " << H_POW_DIFF << std::endl;
 
 			//std::cout << COMMAND_SUBMIT << std::endl;

@@ -93,14 +93,16 @@ using namespace std;
 typedef long long int int64_cu;
 typedef unsigned long long int uint64_cu;
 
-std::string VERSION = "2.2.2";
-std::string REVISION = "e";
-std::string mallob_endpoint = "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
+std::string VERSION = "2.2.3";
+std::string REVISION = "a";
+std::string mallob_endpoint = "http://dynexmallobservice.dynexcoin.org:8081"; //  "http://miner.dynexcoin.org:8000"; // "http://mallob.dynexcoin.org";
 
 #define MAX_ATOMIC_ERR  15
 #define MAX_MALLOB_ERR  20
+#define ADJ_DEFAULT     1.3
 
 //#define POUW_DEBUG 1
+#define ZEROCOPY 1
 
 /// init curl:
 CURL* curl;
@@ -147,27 +149,45 @@ int * jobs_bytes;
 int * num_jobs;
 uint64_cu* h_total_steps;
 
+
+typedef struct {
+	int lambda_last[16];
+	int lambda_loc;
+	uint32_t nonce;
+	uint32_t hradj;
+	uint32_t hashrate;
+	uint32_t gpuchips;
+	uint32_t chip;
+	uint32_t unixts;
+} pouw_struct;
+
+
 // job data structure:
 typedef struct
 {
 	int threadi;
-	int lambda_pos;
+	pouw_struct pouw;
+
 	uint64_cu complexity_counter;
+	uint64_cu state_hash;
+
+	uint64_cu state_nonce;
+	uint64_cu state_diff;
 
 	int* lambda;
 	bool* lambda_bin;
 
-	int n;
-	int m;
-	int stage;
-	int new_units_pos;
-
 	int* new_units;
 	bool* new_units_bin;
 
-	int starting_Xk;
-	int max_adj_size;
 	bool* header;
+	int starting_Xk;
+	int stage;
+
+	int lambda_pos;
+	int new_units_pos;
+	int n;
+	int m;
 
 	int Xk;
 	bool polarity;
@@ -175,14 +195,7 @@ typedef struct
 	bool flipped;
 	char dev;
 
-	int lambda_last[16];
-
-	uint64_cu state_hash;
-	uint64_cu state_nonce;
-
-	uint64_cu state_diff;
-	int lambda_loc;
-	//int dev;
+	int max_adj_size;
 
 } job_struct;
 
@@ -202,7 +215,7 @@ job_struct* d_jobs[MAX_NUM_GPUS]{};
 job_struct* h_jobs[MAX_NUM_GPUS]{};
 
 // system definitions:
-int max_lits_system = 3;
+#define MAX_LIT_SYSTEM 3
 int max_adj_size = 0;
 uint64_cu PARALLEL_RUNS;
 bool debug = false;
@@ -224,11 +237,13 @@ std::string DAEMON_HOST = "localhost";
 std::string DAEMON_PORT = "18333";
 float rem_hashrate = 0;
 
-float ADJ = 1.3;
+float ADJ[MAX_NUM_GPUS] = {0};
 int SYNC = 0;
 bool SKIP = false;
 std::string STATS = "";
 std::string BUSID = "";
+
+uint8_t network_id[32] = {0};
 
 // hasher
 #define MAX_KH  10000
@@ -484,7 +499,6 @@ bool download_file(const std::string filename) {
 		res = curl_easy_perform(curl);
 		curl_easy_cleanup(curl);
 		if(CURLE_OK != res) {
-			/* we failed */
 			fprintf(stderr, " [ERROR] download failed: %d\n", res);
 			return false;
 		}
@@ -506,6 +520,59 @@ bool download_file(const std::string filename) {
 // Mallob MPI command function
 // Returns json object
 ////////////////////////////////////////////////////////////////////////////////////////////////
+jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params, int timeout) {
+	jsonxx::Object retval;
+	bool ret = false;
+	std::string postfields = "{\"method\":\""+method+"\",\"params\":[";
+	bool nump = false;
+	for (int i=0; i<params.size(); i++) {
+		postfields = postfields + "\"" + params[i] + "\",";
+		nump = true;
+	}
+	if (nump) postfields.pop_back(); // remove last ,
+	postfields = postfields + "],\"id\":1}";
+	
+	for (int i=0; i < MAX_MALLOB_ERR; i++) {
+		CURLcode res;
+		struct curl_slist *list = NULL; //header list
+		std::string readBuffer;
+		// header:
+		list = curl_slist_append(list, "Content-type: application/json");
+		// retrieve:
+		curl = curl_easy_init();
+		if (curl) {
+			curl_easy_setopt(curl, CURLOPT_URL, mallob_endpoint.c_str() );
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postfields.c_str());
+			curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout);
+			curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+			auto t1 = std::chrono::high_resolution_clock::now();
+			//Log << TEXT_CYAN << "url: " << mallob_endpoint << std::endl << "postfields: " << postfields << TEXT_DEFAULT << std::endl;
+			res = curl_easy_perform(curl);
+			curl_easy_cleanup(curl);
+			auto t2 = std::chrono::high_resolution_clock::now();
+			float response = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+			if (res != CURLE_OK) {
+				LogTS << TEXT_YELLOW << "[MALLOB] ERROR: " << curl_easy_strerror(res) << TEXT_DEFAULT << std::endl;
+			} else if (retval.parse(readBuffer)) {
+				//Log << TEXT_YELLOW << "RETURNS: " << std::endl<< readBuffer << TEXT_DEFAULT << std::endl;
+				if (retval.has<jsonxx::Object>("result")) {
+					jsonxx::Object data = retval.get<jsonxx::Object>("result");
+					return data;
+				}
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+			continue;
+		}
+	}
+	//if (mallob_debug) Log << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
+	return retval;
+}
+/*
 jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> params, int timeout) {
 	jsonxx::Object retval;
 	bool ret = false;
@@ -573,7 +640,7 @@ jsonxx::Object mallob_mpi_command(std::string method, std::vector<std::string> p
 	//if (mallob_debug) Log << TEXT_GREEN << "returns: " << retval.json() << TEXT_DEFAULT << std::endl;
 	return retval;
 }
-
+*/
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -587,94 +654,116 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool load_cnf(const char* filename) {
-	int i, j, ret;
-	char buffer[256];
+	char * line = NULL;
+	size_t len = 0;
+	n = 0;
+	m = 0;
 
-	LogTS << "[INFO] LOADING FILE " << filename << std::endl;
+	auto t1 = std::chrono::high_resolution_clock::now();
+
 	FILE* file = fopen(filename, "r");
+	if (!file) {
+		LogTS << "[ERROR] FILE NOT FOUND: " << filename << std::endl;
+		return false;
+	}
+	LogTS << "[INFO] LOADING FILE: " << filename << std::endl;
 
-	if (strcmp(buffer, "c") == 0) {
-		while (strcmp(buffer, "\n") != 0) {
-			ret = fscanf(file, "%s", buffer);
+	while (getline(&line, &len, file) != -1) {
+		if (sscanf(line, "p cnf %u %u", &n, &m) == 2) {
+			break;
 		}
 	}
-
-	while (strcmp(buffer, "p") != 0) {
-		ret = fscanf(file, "%s", buffer);
+	if (!n || !m) {
+		LogTS << "[ERROR] INVALID FORMAT" << std::endl;
+		return false;
 	}
-	ret = fscanf(file, " cnf %i %i", &n, &m);
 
 	LogTS << "[INFO] VARIABLES : " << n << std::endl;
 	LogTS << "[INFO] CLAUSES   : " << m << std::endl;
 	LogTS << "[INFO] RATIO     : " << ((double)m / n) << std::endl;
 
 	/// reserve  memory:
-	int* cls = (int*)calloc((size_t)m * max_lits_system, sizeof(int)); // <=== CAN BE REMOVED OR USED FOR DMM
+	int* cls = (int*)calloc((size_t)m * MAX_LIT_SYSTEM, sizeof(int)); // <=== CAN BE REMOVED OR USED FOR DMM
 	a = (int*)calloc((size_t)m, sizeof(int));
 	b = (int*)calloc((size_t)m, sizeof(int));
 	c = (int*)calloc((size_t)m, sizeof(int));
 
 	// read CNF:
+	int res[MAX_LIT_SYSTEM+1];
 	int lit;
-	for (i = 0; i < m; i++) {
-		if (debug && i % 10000 == 0) {
-			LogRTS << "[INFO] LOADING   : " << int(100 * (i + 1) / m) << "% " << std::flush;
-			fflush(stdout);
-		}
-		j = 0;
-		do {
-			ret = fscanf(file, "%s", buffer);
-			if (strcmp(buffer, "c") == 0) {
-				continue;
-			}
-			lit = atoi(buffer);
-			cls[i * max_lits_system + j] = lit;
-			if (j == 0) a[i] = lit;
-			if (j == 1) b[i] = lit;
-			if (j == 2) c[i] = lit;
-			j++;
-		} while (strcmp(buffer, "0") != 0);
-		j--;
-		if (j > max_lits_system) {
-			LogTS << "[ERROR] CLAUSE " << i << " HAS " << j << " LITERALS (" << max_lits_system << " ALLOWED)" << std::endl;
+	int i = -1;
+	while (getline(&line, &len, file) != -1) {
+		lit = sscanf(line, "%d %d %d %d", &res[0], &res[1], &res[2], &res[3]); // MAX_LIT_SYSTEM + 1
+		if (lit == 0) continue; // skip comments and empty lines
+		i++;
+		if (i == m) break;
+
+		// check max amount
+		if (lit > MAX_LIT_SYSTEM && res[MAX_LIT_SYSTEM] != 0) {
+			LogRTS << "[ERROR] CLAUSE " << i << " HAS " << lit << " LITERALS (" << MAX_LIT_SYSTEM << " ALLOWED)" << std::endl;
 			return false;
 		}
-		if (j == 2) {
-			// add same literal to make it 3sat:
-			cls[i * max_lits_system + 2] = cls[i * max_lits_system + 1];
-			c[i] = b[i];
-			//printf(" [INFO] CLAUSE %d: CONVERTED 2SAT->3SAT: %d %d %d\n", i, cls[i*max_lits_system+0], cls[i*max_lits_system+1], cls[i*max_lits_system+2] );
+
+		for (int j = lit; j > 0; j--) {
+			if (res[j-1] == 0) {
+				lit--;
+			} else if (res[j-1] > n) {
+				LogRTS << "[INFO] CLAUSE " << i << " HAS BAD LITERAL " << res[j-1] << " (" << n << " ALLOWED)" << std::endl;
+				return false;
+			}
 		}
-		if (j == 1) {
-			// add same literal to make it 3sat:
-			cls[i * max_lits_system + 1] = cls[i * max_lits_system + 0];
-			cls[i * max_lits_system + 2] = cls[i * max_lits_system + 0];
-			b[i] = a[i];
-			c[i] = a[i];
-			//printf(" [INFO] CLAUSE %d: CONVERTED 1SAT->3SAT: %d %d %d\n", i, cls[i*max_lits_system+0], cls[i*max_lits_system+1], cls[i*max_lits_system+2] );
+
+		// do not allow zero
+		if (lit == 0) {
+			LogRTS << "[INFO] CLAUSE: " << i << " HAS NO LITERALS" << std::endl;
+			continue; // return false;
 		}
+
+		if (debug && i % 100000 == 0) {
+			LogRTS << "[INFO] LOADING   : " << int(100.0 * (i + 1) / m) << "% " << std::flush;
+		}
+
+		for (int j = 0; j < MAX_LIT_SYSTEM; j++) {
+			if (j >= lit) res[j] = res[j-1];
+			cls[i * MAX_LIT_SYSTEM + j] = res[j];
+		}
+
+		a[i] = res[0];
+		b[i] = res[1];
+		c[i] = res[2];
 	}
 	fclose(file);
 	if (debug) {
-		LogRTS << "[INFO] LOADING   : 100 %" << std::endl;
+		LogRTS << "[INFO] LOADING   : " << int(100.0 * (i + 1) / m) << "% " << std::endl;
 	}
+
+	if (i + 1 != m) {
+		LogRTS << "[ERROR] UNEXPECTED END OF FILE: " << i << " (" << m << " EXPECTED)" << std::endl;
+		return false;
+	}
+
+	auto t2 = std::chrono::high_resolution_clock::now();
+	float dur = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+	if (debug) LogTS << "[INFO] LOADED IN " << dur << "ms" << std::endl;
 
 	if (debug) {
 		LogTS << "[INFO] FIRST 10 CLAUSES:" << std::endl;
 		for (i = 0; i < 10; i++) {
 			LogTS << "[INFO] CLAUSE " << i << ": ";
-			for (j = 0; j < max_lits_system; j++) { printf(" %d", cls[i * max_lits_system + j]); }
-			//printf(" CONTROL: %d %d %d",a[i],b[i],c[i]);
+			for (int j = 0; j < MAX_LIT_SYSTEM; j++) {
+				Log << cls[i * MAX_LIT_SYSTEM + j] << " ";
+			}
 			Log << std::endl;
 		}
 	}
+	if (cls) free(cls);
 
 	/// Build adjances of all oppositve literals:
 	// STD::VECTOR here to save 2gb memory limit - OR: MAXIMUM adj_sizes here (and not 2*n+1)
 	// ....
 
 	int* adj_sizes = (int*)calloc((size_t)(2 * n + 1), sizeof(int));
-	for (j = 1; j <= n * 2; j++) adj_sizes[j] = 0;
+	for (int j = 1; j <= n * 2; j++) adj_sizes[j] = 0;
 
 	// find max_adj_size (save memory):
 	for (int k = 0; k < m; k++) {
@@ -705,7 +794,7 @@ bool load_cnf(const char* filename) {
 	}
 	//printf(" [INFO] max_adj_size = %d\n", max_adj_size);
 	//printf(" [INFO] max memory for this = %u\n", (2 * n + 1) * max_adj_size);
-	for (j = 1; j <= n * 2; j++) adj_sizes[j] = 0;
+	for (int j = 1; j <= n * 2; j++) adj_sizes[j] = 0;
 	//---
 
 	//int * adj = (int *) calloc((size_t) m*(2*n+1), sizeof(int)); // <== needs 3GB! (2GB LIMIT) -> use vector first, then transform to array
@@ -750,7 +839,7 @@ bool load_cnf(const char* filename) {
 	if (debug) {
 		for (int k = 1; k < (n * 2 + 1); k++) {
 			LogTS << "[INFO] DEBUG ADJ[" << k << "]:";
-			for (j = 0; j < adj_sizes[k]; j++) {
+			for (int j = 0; j < adj_sizes[k]; j++) {
 				Log << " " << adj[k * max_adj_size + j];
 			}
 			Log << std::endl;
@@ -760,7 +849,7 @@ bool load_cnf(const char* filename) {
 
 	/// get negative associations: WE ASSUME MAX_ADJ_SIZE IS THE SAME FOR OPP LITERALS - CHECK THIS!!!!
 	adj_opp_sizes = (int*)calloc((size_t)(2 * n + 1), sizeof(int));
-	for (j = 1; j <= 2 * n; j++) adj_opp_sizes[j] = 0;
+	for (int j = 1; j <= 2 * n; j++) adj_opp_sizes[j] = 0;
 
 	adj_opp = (int*)calloc((size_t)max_adj_size * (2 * n + 1), sizeof(int));
 
@@ -826,7 +915,7 @@ bool load_cnf(const char* filename) {
 	if (debug) {
 		for (int k = 1; k < (n * 2 + 1); k++) {
 			LogTS << "[INFO] DEBUG ADJ_OPP[" << k << "]: ";
-			for (j = 0; j < adj_opp_sizes[k]; j++) {
+			for (int j = 0; j < adj_opp_sizes[k]; j++) {
 				Log << " " << adj_opp[k * max_adj_size + j];
 			}
 			Log << std::endl;
@@ -835,12 +924,16 @@ bool load_cnf(const char* filename) {
 	//LogTS << "[INFO] NEGATIVE ADJANCES TABLE BUILT" << std::endl;
 	//Log << "DEBUG: max_adj_size = " << max_adj_size << " table size = " << max_adj_size * (2 * n + 1) << std::endl;
 
+	free(adj);
+	free(adj_sizes);
+
 	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// DEVICE FUNCTIONS
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 __device__ uint64_cu bswap32(uint64_cu x) {
 	return ((((x) << 24) & 0xff000000u) | (((x) << 8) & 0x00ff0000u) | (((x) >> 8) & 0x0000ff00u) | (((x) >> 24) & 0x000000ffu));
 }
@@ -880,41 +973,39 @@ __device__ void increment_complexity(job_struct& job) {
 			0x748f82ee78a5636f,0x84c878148cc70208,0x90befffaa4506ceb,0xbef9a3f7c67178f2
 		};
 
-		uint32_t lambda_in[21];
-		for (int i = 0; i < 16; i++) lambda_in[i] = job.lambda_last[i];
-		lambda_in[16] = job.lambda_loc;
-		lambda_in[17] = job.dev;
-		lambda_in[18] = job.threadi;
-		lambda_in[19] = uint32_t(job.complexity_counter);
-		lambda_in[20] = uint32_t(job.complexity_counter >> 32);
-
+#ifdef ZEROCOPY
+		uint32_t* lambda_in = (uint32_t*)&job.pouw.lambda_last[0];
+#else
+		uint32_t lambda_in[25];
+		for (int i = 0; i < 16; i++) lambda_in[i] = job.pouw.lambda_last[i];
+		lambda_in[16] = job.pouw.lambda_loc;
+		lambda_in[17] = job.pouw.nonce;
+		lambda_in[18] = job.pouw.hradj;
+		lambda_in[19] = job.pouw.hashrate;
+		lambda_in[20] = job.pouw.gpuchips;
+		lambda_in[21] = job.pouw.chip;
+		lambda_in[22] = job.pouw.unixts;
+		lambda_in[23] = uint32_t(job.complexity_counter);
+		lambda_in[24] = uint32_t(job.complexity_counter >> 32);
+#endif
 		uint64_cu m = 0x5bd1e995;
-		int len = 21;
-		int r = 24;
-		int data = 20;
+		int len = 25;
 		uint64_cu h = box[0] ^ len;
 
-		while (len >=4) {
-			uint64_cu k = lambda_in[data];
+		while (len > 3) {
+			uint64_cu k = lambda_in[--len];
 			k *= m;
-			k ^= k >> r;
+			k ^= k >> 24;
 			k *= m;
 			h *= m;
 			h ^= k;
-			data -= 1;
-			len -=1;
-		}
-		//printf("-%llx- ",h);
-
-		switch(len)
-		{
-			case 3: h ^= lambda_in[2] << 16;
-			case 2: h ^= lambda_in[1] << 8;
-			case 1: h ^= lambda_in[0];
-					h *= m;
 		}
 
+		h ^= lambda_in[2] << 16;
+		h ^= lambda_in[1] << 8;
+		h ^= lambda_in[0];
 
+		h *= m;
 		h ^= h >> 13;
 		h *= m;
 		h ^= h >> 15;
@@ -1003,7 +1094,7 @@ __device__  void RestoreLambda(const int previousSize, job_struct& job) { // mak
 			//dm job.lambda[job.lambda_pos - 1] = 0;
 			job.lambda_pos--;
 		}
-		job.complexity_counter += diff; increment_complexity(job);
+		job.complexity_counter += diff; //increment_complexity(job);
 		//printf("GPU ====> "); for (int i=0; i<job.lambda_pos; i++) printf("%d ",job.lambda[i]); printf("\n");
 	}
 	return;
@@ -1027,7 +1118,7 @@ __device__  void RestoreLambda(const int previousSize, job_struct& job) { // mak
 		}
 	}
 	job.lambda_pos-= diff;
-	job.complexity_counter += diff; increment_complexity(job);
+	job.complexity_counter += diff; //increment_complexity(job);
 	//printf("GPU ====> "); for (int i=0; i<job.lambda_pos; i++) printf("%d ",job.lambda[i]); printf("\n");
 	return;
 }
@@ -1406,12 +1497,17 @@ void init_dynex_jobs(const int numchips, const int n, const int m, const int max
 		for (int i = 0; i < (n * 2 + 1); i++) d_jobs[chip].header[i] = false;
 		for (int i = 0; i < (n * 2 + 1); i++) d_jobs[chip].new_units_bin[i] = false;
 		for (int i = 0; i < (n * 2 + 1); i++) d_jobs[chip].new_units[i] = 0;
-		for (int i = 0; i < 16; i++) d_jobs[chip].lambda_last[i] = 0;
+		for (int i = 0; i < 16; i++) d_jobs[chip].pouw.lambda_last[i] = 0;
+		d_jobs[chip].pouw.lambda_loc = m;
+		d_jobs[chip].pouw.nonce = 0;
+		d_jobs[chip].pouw.hradj = 0;
+		d_jobs[chip].pouw.hashrate = 0;
+		d_jobs[chip].pouw.gpuchips = 0;
+		d_jobs[chip].pouw.chip = 0;
+		d_jobs[chip].pouw.unixts = 0;
 
 		d_jobs[chip].threadi = -1;
-
 		d_jobs[chip].lambda_pos = 0;
-
 		d_jobs[chip].complexity_counter = (uint64_cu)0;
 		d_jobs[chip].n = n;
 		d_jobs[chip].m = m;
@@ -1427,7 +1523,7 @@ void init_dynex_jobs(const int numchips, const int n, const int m, const int max
 		d_jobs[chip].state_hash =  0xffffffffffffffff;
 		d_jobs[chip].state_nonce = 0x00000000;
 		d_jobs[chip].state_diff = 0;
-		d_jobs[chip].lambda_loc = m;
+		d_jobs[chip].dev = 0;
 	}
 	//printf("KERNEL prepared d_jobs for %d chips\n", numchips);
 }
@@ -1474,8 +1570,7 @@ void set_state(const int i, job_struct* d_job, int* d_job_lambda, bool* d_job_la
 }
 
 __global__
-void run_minima(const int threadi, const int * d_a, const int * d_b, const int *d_c, job_struct * d_jobs, int* d_lambda_loc, int* d_lambda_last) {
-
+void run_minima(const int threadi, const int * d_a, const int * d_b, const int *d_c, job_struct * d_jobs, pouw_struct * d_pouw) {
 	int satisfied_clauses = 0;
 	int check_to = d_jobs[threadi].lambda_pos;
 	int check_from = check_to - 16; if (check_from < 0 ) check_from = 0;
@@ -1499,12 +1594,12 @@ void run_minima(const int threadi, const int * d_a, const int * d_b, const int *
 		}
 	}
 	// move result into d_x:
-	d_lambda_loc[0] = satisfied_clauses;
-	for (int i = 0; i < 16; i++) d_lambda_last[i] = d_jobs[threadi].lambda[check_from+i];
+	d_pouw->lambda_loc = satisfied_clauses;
+	for (int i = 0; i < 16; i++) d_pouw->lambda_last[i] = d_jobs[threadi].lambda[check_from+i];
 }
 
 __global__
-void run_DynexChipUpperBound(const int dev, const int n, const int m, const int max_adj_size, int* d_solved, int* d_lambda_solution, uint64_cu * d_total_steps, const bool init, const uint64_cu maxsteps, const int jobs_required_from, const int jobs_required_to, job_struct * d_jobs, const int * d_a, const int * d_b, const int *d_c, const int * d_adj_opp, const int * d_adj_opp_sizes, int* d_lambda_loc, uint64_cu* d_state_hash, uint64_cu* d_state_nonce, int* d_lambda_last, int* d_lambda_threadi, uint64_cu* d_state_diff) {
+void run_DynexChipUpperBound(const int dev, const int n, const int m, const int max_adj_size, int* d_solved, int* d_lambda_solution, uint64_cu * d_total_steps, const bool init, const uint64_cu maxsteps, const int jobs_required_from, const int jobs_required_to, job_struct * d_jobs, const int * d_a, const int * d_b, const int *d_c, const int * d_adj_opp, const int * d_adj_opp_sizes, uint64_cu* d_state_hash, uint64_cu* d_state_nonce, pouw_struct* d_pouw, int* d_lambda_threadi, uint64_cu* d_state_diff) {
 
 	int threadi = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1543,7 +1638,6 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 			d_jobs[threadi].flipped = true;
 			//set lambda:
 			set_lambda(d_jobs[threadi].Xk, d_jobs[threadi]);
-			//init states:
 			d_jobs[threadi].dev = dev;
 		}
 
@@ -1558,8 +1652,14 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 		d_jobs[threadi].state_hash = 0xffffffffffffffff;
 		d_jobs[threadi].state_nonce= 0x00000000;
 		d_jobs[threadi].state_diff = 0;
-		for (int i = 0; i < 16; i++) d_jobs[threadi].lambda_last[i] = d_lambda_last[i];
-		d_jobs[threadi].lambda_loc = d_lambda_loc[0];
+		for (int i = 0; i < 16; i++) d_jobs[threadi].pouw.lambda_last[i] = d_pouw->lambda_last[i];
+		d_jobs[threadi].pouw.lambda_loc = d_pouw->lambda_loc;
+		d_jobs[threadi].pouw.nonce = d_pouw->nonce;
+		d_jobs[threadi].pouw.hradj = d_pouw->hradj;
+		d_jobs[threadi].pouw.hashrate = d_pouw->hashrate;
+		d_jobs[threadi].pouw.gpuchips = d_pouw->gpuchips;
+		d_jobs[threadi].pouw.chip = (dev << 16) | threadi;
+		d_jobs[threadi].pouw.unixts = d_pouw->unixts;
 
 		//printf("DEBUGxCHIP %d: %d..%d\n", d_jobs[threadi].threadi, d_jobs[threadi].lambda_last[0], d_jobs[threadi].lambda_last[15]);
 
@@ -1614,15 +1714,17 @@ void run_DynexChipUpperBound(const int dev, const int n, const int m, const int 
 			return;
 		}
 
-		//update state_hash, diff, lambda, loc etc:
-		if (d_jobs[threadi].state_diff > d_state_diff[0]) {
+		// update state_hash, diff
+		//if (d_jobs[threadi].state_diff > d_state_diff[0]) {
+		if (atomicMax(d_state_diff, d_jobs[threadi].state_diff) < d_jobs[threadi].state_diff) {
+			//d_state_diff[0] = d_jobs[threadi].state_diff;
 			d_state_hash[0] = d_jobs[threadi].state_hash;
 			d_state_nonce[0] = d_jobs[threadi].state_nonce;
-			d_state_diff[0] = d_jobs[threadi].state_diff;
 			d_lambda_threadi[0] = d_jobs[threadi].threadi;
-			d_lambda_loc[0] = d_jobs[threadi].lambda_loc;
-			for (int i = 0; i < 16; i++) d_lambda_last[i] = d_jobs[threadi].lambda_last[i];
-			__syncthreads();
+			d_pouw->chip = d_jobs[threadi].pouw.chip;
+			//d_pouw->lambda_loc = d_jobs[threadi].pouw.lambda_loc;
+			//for (int i = 0; i < 16; i++) d_pouw->lambda_last[i] = d_jobs[threadi].pouw.lambda_last[i];
+			//for (int i = 0; i < 25; i++) printf("DEBUGxCHIP %d - %d: %X\n", threadi, i, d_jobs[threadi].pouw.lambda_last[i]);
 		}
 
 		threadi += blockDim.x * gridDim.x; // try next threadi
@@ -1651,12 +1753,18 @@ int query_devices(int device_id) {
 	if (device_id >= 0 && device_id < nDevices) LogTS << TEXT_SILVER << "[INFO] USING GPU DEVICE " << device_id << TEXT_DEFAULT << std::endl;
 
 	BUSID = "";
+	std::string adj_str;
 	for (int i = (device_id==-1?0:device_id); i < nDevices; i++) {
 		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), i) != disabled_gpus.end()) continue; // skip disabled
 		cudaSetDevice(i);
 		cudaDeviceProp devProp;
 		cudaGetDeviceProperties(&devProp, i);
-		LogTS << TEXT_CYAN << "[GPU " << i << "] "; printf("%02x:%02x %s %lu MB (%d.%d)%s\n", devProp.pciBusID, devProp.pciDeviceID, devProp.name, devProp.totalGlobalMem/1024/1024, devProp.major, devProp.minor, TEXT_DEFAULT);
+		adj_str = "";
+		if (ADJ[i]) {
+			adj_str = " ADJ = ";
+			adj_str.append(std::to_string(ADJ[i]));
+		}
+		LogTS << TEXT_CYAN << "[GPU " << i << "] "; printf("%02x:%02x %s %lu MB (%d.%d)%s%s\n", devProp.pciBusID, devProp.pciDeviceID, devProp.name, devProp.totalGlobalMem/1024/1024, devProp.major, devProp.minor, adj_str.c_str(), TEXT_DEFAULT);
 		BUSID.append(BUSID == "" ? "[" : ",").append(std::to_string(devProp.pciBusID));
 		if (device_id != -1) break;
 	}
@@ -1934,7 +2042,8 @@ int init_states(int device_id, int maximum_jobs) {
 	mem_job += (2 * n + 1) * sizeof(int); //units
 	mem_job += (2 * n + 1) * sizeof(bool); //units_bin
 
-	mem_job = abs(mem_job * ADJ);
+	LogTS << "[INFO] BASE MEMORY REQUIRED: " << mem_req << " BYTES" << std::endl;
+	LogTS << "[INFO] MIN MEMORY REQUIRED PER DYNEX CHIP: " << mem_job << " BYTES" << std::endl;
 
 	// fitting jobs:
 	int jobs_possible_all = 0;
@@ -1943,21 +2052,20 @@ int init_states(int device_id, int maximum_jobs) {
 		// only not disabled gpus:
 		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) != disabled_gpus.end())
 			continue;
+		uint64_cu mem_job_gpu = abs(mem_job * ADJ[dev]);
 		size_t free, total;
 		gpuErrchk(cudaSetDevice(device_id));
 		cudaMemGetInfo(&free, &total);
 		if (max_heap_size[dev] < free) max_heap_size[dev] = free;
-		if (max_heap_size[dev] <= mem_req + mem_job*2) {
+		if (max_heap_size[dev] <= mem_req + 2*mem_job_gpu) {
 			LogTS << "[GPU " << dev << "] LOW MEMORY AVAILABLE - DISABLE" << std::endl;
 			disabled_gpus.push_back(dev);
 		} else {
-			jobs_possible_all += (int)((max_heap_size[dev] - mem_req) / mem_job) - 1;
+			jobs_possible_all += (int)((max_heap_size[dev] - mem_req) / mem_job_gpu) - 1;
 		}
 	}
 
 	int jobs_required = n * 2 * 8;
-	LogTS << "[INFO] BASE MEMORY REQUIRED: " << mem_req << " BYTES" << std::endl;
-	LogTS << "[INFO] MEMORY REQUIRED PER DYNEX CHIP: " << mem_job << " BYTES" << std::endl;
 	LogTS << "[INFO] MAX DYNEX CHIPS FITTING IN MEMORY (ALL GPUs): " << jobs_possible_all << std::endl;
 	LogTS << "[INFO] PARALLEL DYNEX CHIPS REQUIRED: " << jobs_required << std::endl;
 
@@ -1972,15 +2080,15 @@ int init_states(int device_id, int maximum_jobs) {
 		LogTS << "[MALLOB] GETTING CHIPS..." << std::endl;
 
 		std::vector<std::string> p3;
-		p3.push_back("network_id=" + MALLOB_NETWORK_ID);
-		p3.push_back("job_id=" + std::to_string(JOB_ID));
-		p3.push_back("capacity=" + std::to_string(num_jobs_all));
-		p3.push_back("version=" + VERSION);
+		p3.push_back(MALLOB_NETWORK_ID);
+		p3.push_back(std::to_string(JOB_ID));
+		p3.push_back(std::to_string(num_jobs_all));
+		p3.push_back(VERSION);
 
 		for (int i = 0; i < 5; i++) {
 			if (i) std::this_thread::sleep_for(std::chrono::seconds(3));
 			jsonxx::Object o3 = mallob_mpi_command("update_capacity", p3, 60);
-			if (o3.get<jsonxx::Boolean>("result")) {
+			if (o3.get<jsonxx::Boolean>("updated")) {
 				CHIPS_REQUIRED = o3.get<jsonxx::Number>("chips");
 				if (CHIPS_REQUIRED <= 0) {
 					LogTS << TEXT_RED << "[INFO] NO CHIPS REQUIRED FOR THE CURRENT JOB" << TEXT_DEFAULT << std::endl;
@@ -2029,7 +2137,7 @@ int init_states(int device_id, int maximum_jobs) {
 		gpuErrchk(cudaSetDevice(device_id));
 		// calculate number of jobs to be created => num_jobs[dev]:
 		int jobs_possible = 0;
-		jobs_possible = (int)((max_heap_size[dev] - mem_req) / mem_job);
+		jobs_possible = (int)((max_heap_size[dev] - mem_req) / abs(mem_job * ADJ[dev]));
 		// less jobs than space here?
 		if (jobs_possible > num_jobs_free) {
 			jobs_possible = num_jobs_free;
@@ -2167,13 +2275,13 @@ bool gpu_speed(float*& miner_hashrate, cudaEvent_t *& start, cudaEvent_t *& stop
 			float elapsed = 0;
 			cudaEventElapsedTime(&elapsed, start[dev], stop[dev]);
 			float rate = cycles / (elapsed/1000.0);
-			miner_hashrate[dev] = (100.0 * (rate / 14777863.0 )) / 2942.0 * (float)num_jobs[dev];
-			LogTS << "[GPU " << device_id << "] PEAK PERFORMANCE: " << std::fixed << std::setprecision(0) << rate/1000 << " kFLOPS" << std::endl;
+			miner_hashrate[dev] = (100.0 * (rate / 14777863.0 )) / 2942.0 * (float)num_jobs[dev] * 1.15;
+			//LogTS << "[GPU " << device_id << "] PEAK PERFORMANCE: " << std::fixed << std::setprecision(0) << rate/1000 << " kFLOPS" << std::endl;
 			if (miner_hashrate[dev]<1) miner_hashrate[dev] = 1.0;
 			total_rate += rate;
 		}
 	}
-	if (use_multi_gpu) LogTS << "[GPU *] PEAK PERFORMANCE: " << std::fixed << std::setprecision(0) << total_rate/1000 << " kFLOPS" << std::endl;
+	//if (use_multi_gpu) LogTS << "[GPU *] PEAK PERFORMANCE: " << std::fixed << std::setprecision(0) << total_rate/1000 << " kFLOPS" << std::endl;
 
 	return true;
 }
@@ -2224,18 +2332,16 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	for (int i = 0; i < nDevices; i++) d_lambda_solution[i] = new int(n);
 
 	int* d_lambda_threadi[MAX_NUM_GPUS];
-	int* d_lambda_loc[MAX_NUM_GPUS];
 	uint64_cu* d_state_hash[MAX_NUM_GPUS];
 	uint64_cu* d_state_nonce[MAX_NUM_GPUS];
 	uint64_cu* d_state_diff[MAX_NUM_GPUS];
-	int* d_lambda_last[MAX_NUM_GPUS];
+	pouw_struct* d_pouw[MAX_NUM_GPUS];
 
 	int* h_lambda_threadi = (int*)calloc((size_t) 1, sizeof(int));
-	int* h_lambda_loc = (int*)calloc((size_t) 1, sizeof(int));
 	uint64_cu* h_state_hash = (uint64_cu*)calloc((size_t) 1, sizeof(uint64_cu));
 	uint64_cu* h_state_nonce = (uint64_cu*)calloc((size_t) 1, sizeof(uint64_cu));
 	uint64_cu* h_state_diff = (uint64_cu*)calloc((size_t) 1, sizeof(uint64_cu));
-	int* h_lambda_last = (int*)calloc((size_t) 16, sizeof(int));
+	pouw_struct* h_pouw = (pouw_struct*)calloc((size_t) 1, sizeof(pouw_struct));
 
 	// move core (copyable) data to device (single & multi):
 	for (int dev = 0; dev < nDevices; dev++) {
@@ -2250,11 +2356,10 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 			gpuErrchk(cudaMalloc((void**)&d_lambda_solution[dev], n * sizeof(int))); // <== works
 
 			gpuErrchk(cudaMalloc((void**)&d_lambda_threadi[dev], 1 * sizeof(int)));
-			gpuErrchk(cudaMalloc((void**)&d_lambda_loc[dev], 1 * sizeof(int)));
 			gpuErrchk(cudaMalloc((void**)&d_state_hash[dev], 1 * sizeof(uint64_cu)));
 			gpuErrchk(cudaMalloc((void**)&d_state_diff[dev], 1 * sizeof(uint64_cu)));
 			gpuErrchk(cudaMalloc((void**)&d_state_nonce[dev], 1 * sizeof(uint64_cu)));
-			gpuErrchk(cudaMalloc((void**)&d_lambda_last[dev], 16 * sizeof(int)));
+			gpuErrchk(cudaMalloc((void**)&d_pouw[dev], sizeof(pouw_struct)));
 
 			LogTS << "[GPU " << device_id <<"] CORE DATA COPIED TO GPU " << device_id << std::endl;
 		}
@@ -2308,8 +2413,8 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		// only not disabled gpus:
 		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
 			gpuErrchk(cudaSetDevice(device_id));
-			cudaEventCreate(&start[dev]);
-			cudaEventCreate(&stop[dev]);
+			cudaEventCreateWithFlags(&start[dev], SYNC?cudaEventBlockingSync:cudaEventDefault);
+			cudaEventCreateWithFlags(&stop[dev], SYNC?cudaEventBlockingSync:cudaEventDefault);
 		}
 	}
 
@@ -2328,21 +2433,18 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 	if (!testing) {
 		for(int i = 0; i < MAX_ATOMIC_ERR; i++) {
 			std::vector<std::string> p5;
-			p5.push_back("network_id=" + MALLOB_NETWORK_ID);
-			p5.push_back("atomic_status=" + std::to_string(ATOMIC_STATUS_RUNNING));
-			p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
-			p5.push_back("steps=" + std::to_string(h_total_steps_all));
-			p5.push_back("version=" + VERSION);
+			//network_id, atomic_status, steps_per_run, steps, hr, hr_adj
+			p5.push_back(MALLOB_NETWORK_ID);
+			p5.push_back(std::to_string(ATOMIC_STATUS_RUNNING));
+			p5.push_back(std::to_string(steps_per_run));
+			p5.push_back(std::to_string(h_total_steps_all));
+			p5.push_back(std::to_string(0));
+			p5.push_back(std::to_string(0));
 			jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
-			if (o5.get<jsonxx::Boolean>("result")) {
+			if (o5.get<jsonxx::Boolean>("updated")) {
 				LogTS << "[MALLOB] ATOMIC STATE UPDATED" << std::endl;
 				errors = 0;
 				break;
-			} else if (o5.has<jsonxx::Boolean>("status")) {
-				//LogTS << TEXT_RED << "[ERROR] ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
-				if (work_in_progress)
-					LogTS << TEXT_RED << "[ERROR] PLEASE DELETE YOUR GPU_*.bin FILES, YOU CANNOT CONTINUE WORK FROM THERE ANYMORE" << TEXT_DEFAULT << std::endl;
-				return false;
 			} else {
 				//LogTS << "[MALLOB] ATOMIC STATE UPDATE ERROR" << std::endl;
 				errors++;
@@ -2379,17 +2481,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 
 			if (SYNC) cudaSetDeviceFlags((SYNC==1)?cudaDeviceScheduleBlockingSync:cudaDeviceBlockingSync);
 			gpuErrchk(cudaEventRecord(start[dev]));
-			run_DynexChipUpperBound << <numBlocks[dev], threadsPerBlock[dev] >> > (dev, n, m, max_adj_size, d_solved[dev], d_lambda_solution[dev], d_total_steps[dev], !work_in_progress, steps_per_run, CHIP_FROM[dev], CHIP_TO[dev], d_jobs[dev], d_a[dev], d_b[dev], d_c[dev], d_adj_opp[dev], d_adj_opp_sizes[dev], d_lambda_loc[dev], d_state_hash[dev], d_state_nonce[dev], d_lambda_last[dev], d_lambda_threadi[dev], d_state_diff[dev]); // init only when work_in_progress = false
-		}
-	}
-
-	for (int dev = 0; dev < nDevices; dev++) {
-		if (use_multi_gpu) device_id = dev;
-		// only not disabled gpus:
-		if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
-			gpuErrchk(cudaSetDevice(device_id));
-			gpuErrchk(cudaDeviceSynchronize());
-			gpuErrchk(cudaEventRecord(stop[dev]));
+			run_DynexChipUpperBound << <numBlocks[dev], threadsPerBlock[dev] >> > (dev, n, m, max_adj_size, d_solved[dev], d_lambda_solution[dev], d_total_steps[dev], !work_in_progress, steps_per_run, CHIP_FROM[dev], CHIP_TO[dev], d_jobs[dev], d_a[dev], d_b[dev], d_c[dev], d_adj_opp[dev], d_adj_opp_sizes[dev], d_state_hash[dev], d_state_nonce[dev], d_pouw[dev], d_lambda_threadi[dev], d_state_diff[dev]); // init only when work_in_progress = false
 		}
 	}
 
@@ -2423,6 +2515,10 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 			// only not disabled gpus:
 			if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
 				gpuErrchk(cudaSetDevice(device_id));
+				//gpuErrchk(cudaDeviceSynchronize());
+				gpuErrchk(cudaEventRecord(stop[dev]));
+				gpuErrchk(cudaEventSynchronize(stop[dev]));
+
 				gpuErrchk(cudaMemcpy(h_total_steps, d_total_steps[dev], sizeof(uint64_cu), cudaMemcpyDeviceToHost));
 				h_total_steps_dev[dev] = h_total_steps[0];
 
@@ -2438,15 +2534,12 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 					gpuErrchk(cudaMemcpy(h_state_hash, d_state_hash[dev], sizeof(uint64_cu), cudaMemcpyDeviceToHost));
 					gpuErrchk(cudaMemcpy(h_state_nonce, d_state_nonce[dev], sizeof(uint64_cu), cudaMemcpyDeviceToHost));
 					gpuErrchk(cudaMemcpy(h_lambda_threadi, d_lambda_threadi[dev], sizeof(int), cudaMemcpyDeviceToHost));
-					gpuErrchk(cudaMemcpy(h_lambda_loc, d_lambda_loc[dev], sizeof(int), cudaMemcpyDeviceToHost));
-					gpuErrchk(cudaMemcpy(h_lambda_last, d_lambda_last[dev], 16*sizeof(int), cudaMemcpyDeviceToHost));
+					gpuErrchk(cudaMemcpy(h_pouw, d_pouw[dev], sizeof(pouw_struct), cudaMemcpyDeviceToHost));
 					h_lambda_dev_best = dev;
 					h_state_diff_best = h_state_diff[0];
 				}
 				//std::cout << "---------  GPU " << dev << " => diff = " << std::dec << h_state_diff[0] << " h_state_diff_best = " << h_state_diff_best << std::endl;
 
-				// continue run for steps_per_run runs:
-				gpuErrchk(cudaEventSynchronize(stop[dev]));
 				milliseconds = 0;
 				cudaEventElapsedTime(&milliseconds, start[dev], stop[dev]);
 				uint64_cu steps_performed_this_batch = h_total_steps[0] - rem_steps[dev];
@@ -2463,6 +2556,7 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 				gpustats.append(gpustats == "" ? "[" : ",").append(std::to_string(pool_hashrate));
 			}
 		}
+		
 		if (gpustats != "") gpustats.append("]");
 
 		// summary of all:
@@ -2475,11 +2569,16 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		// input for next batch:
 		// state blob:
 		std::stringstream sstra;
-		for (int i=0; i<16; i++) sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_last[i];
-		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_loc[0];
-		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_dev_best;
-		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_threadi[0];
-		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_nonce[0];
+		for (int i=0; i<16; i++) sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->lambda_last[i];
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->lambda_loc;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->nonce;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->hradj;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->hashrate;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->gpuchips;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->chip;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->unixts;
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << (uint32_t)h_state_nonce[0];
+		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << (uint32_t)(h_state_nonce[0] >> 32);
 		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << n;
 		sstra << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << m;
 		std::string sstra_blob(sstra.str());
@@ -2499,9 +2598,9 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 #pragma message("POUW DEBUG")
 		// DEBUG ROUTINE: ****************************************************************************************************
 		Log << POUW_BLOB << " => " << POUW_HASH << " (diff: " << POUW_DIFF << " job: " << POUW_JOB << ")" <<std::endl;
-
 		std::string url = "http://127.0.0.1:8080/rpc";
 		std::string postfields = "{\"method\":\"verify\",\"params\":[\""+MALLOB_NETWORK_ID+"\",\""+POUW_BLOB+"\",\""+POUW_HASH+"\",\""+POUW_DIFF+"\"],\"id\":1}";
+
 		Log << TEXT_GREEN << "postfields: " << postfields << TEXT_DEFAULT << std::endl;
 		CURLcode res;
 		std::string readBuffer;
@@ -2527,11 +2626,18 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		}
 		// *******************************************************************************************************************
 
-		Log << "DEBUG: state_hash = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_hash[0] << " state_nonce = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_nonce[0] << std::dec << " loc = " << h_lambda_loc[0] << " threadi = " << h_lambda_threadi[0] << " dev = " << h_lambda_dev_best << " diff = " << GPU_DIFF << " (next: " << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_last[0] << "..." << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_lambda_last[15] << ")" << std::endl;
+		Log << "DEBUG: state_hash = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_hash[0]
+			<< " state_nonce = " << std::hex << std::setfill ('0') << std::setw(sizeof(uint64_cu)*2) << h_state_nonce[0] << std::dec
+			<< " loc = " << h_pouw->lambda_loc << " threadi = " << h_lambda_threadi[0] << " dev = " << h_lambda_dev_best
+			<< " diff = " << GPU_DIFF << " (next: " << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->lambda_last[0]
+			<< "..." << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->lambda_last[15] << ")"
+			<< " nonce = " << std::hex << std::setfill ('0') << std::setw(sizeof(int)*2) << h_pouw->nonce << " unixts " << h_pouw->unixts << std::endl;
 #endif
 
 		if (use_multi_gpu) {
-			LogTS << TEXT_SILVER << "[GPU *] " << h_total_steps_all << " STEPS (+" << steps_performed_this_batch_all << ") | " << std::fixed << std::setprecision(2) << milliseconds / 1000 << "s | FLOPS = " << int(hashrate/1000) << " kFLOPS | HR = " << std::setprecision(3) << miner_hashrate_all << " H | AVG(O)n ^ " << std::setprecision(5) << ocompl << TEXT_DEFAULT << std::endl;
+			LogTS << TEXT_SILVER << "[GPU *] " << h_total_steps_all << " STEPS (+" << steps_performed_this_batch_all << ") | "
+				<< std::fixed << std::setprecision(2) << milliseconds / 1000 << "s | FLOPS = " << int(hashrate/1000) << " kFLOPS | HR = "
+				<< std::setprecision(3) << miner_hashrate_all << " H | AVG(O)n ^ " << std::setprecision(5) << ocompl << TEXT_DEFAULT << std::endl;
 		}
 
 		if (stratum) {
@@ -2547,17 +2653,6 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 			}
 		}
 
-		// reset d_total_steps:
-		h_total_steps[0] = 0;
-		for (int dev = 0; dev < nDevices; dev++) {
-			if (use_multi_gpu) device_id = dev;
-			// only not disabled gpus:
-			if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
-				gpuErrchk(cudaSetDevice(device_id));
-				gpuErrchk(cudaMemcpy(d_total_steps[dev], h_total_steps, sizeof(uint64_cu), cudaMemcpyHostToDevice));
-			}
-		}
-
 		if (!testing && count_batches % 10 == 0) {
 			/// GPU probe:
 			if (!gpu_speed(miner_hashrate, start, stop, device_id)) return false;
@@ -2569,21 +2664,18 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		if (!testing && updated >= 60) {
 			/// MALLOB: update_job_atomic -> let mallob know that we are working ++++++++++++++++++++++++++++++++++++++++++++++
 			std::vector<std::string> p5;
-			p5.push_back("network_id=" + MALLOB_NETWORK_ID);
-			p5.push_back("atomic_status=" + std::to_string(ATOMIC_STATUS_RUNNING));
-			p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
-			p5.push_back("steps=" + std::to_string(h_total_steps_all));
-			p5.push_back("hr=" + std::to_string(int(hashrate / 1000)));
-			p5.push_back("hradj=" + std::to_string(int(pool_hashrate_all)));
-			p5.push_back("version=" + VERSION);
+			//network_id, atomic_status, steps_per_run, steps, hr, hr_adj
+			p5.push_back(MALLOB_NETWORK_ID);
+			p5.push_back(std::to_string(ATOMIC_STATUS_RUNNING));
+			p5.push_back(std::to_string(steps_per_run));
+			p5.push_back(std::to_string(h_total_steps_all));
+			p5.push_back(std::to_string(h_pouw->hashrate));
+			p5.push_back(std::to_string(h_pouw->hradj));
 			jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
-			if (o5.get<jsonxx::Boolean>("result")) {
+			if (o5.get<jsonxx::Boolean>("updated")) {
 				LogTS << "[MALLOB] ATOMIC STATE UPDATED" << std::endl;
 				errors = 0;
 				t5 = t6;
-			} else if (o5.has<jsonxx::Boolean>("status")) {
-				//LogTS << TEXT_RED << "[ERROR] ATOMIC JOB EXPIRED" << TEXT_DEFAULT << std::endl;
-				return false;
 			} else {
 				//LogTS << "[MALLOB] ATOMIC STATE UPDATE ERROR" << std::endl;
 				if (errors++ > MAX_ATOMIC_ERR)
@@ -2612,41 +2704,42 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 		/// looped kernel start:
+		h_total_steps[0] = 0;
 		bool min_set = false;
 		for (int dev = 0; dev < nDevices; dev++) {
 			if (use_multi_gpu) device_id = dev;
 			// only not disabled gpus:
 			if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
 				gpuErrchk(cudaSetDevice(device_id));
+
+				// reset d_total_steps:
+				gpuErrchk(cudaMemcpy(d_total_steps[dev], h_total_steps, sizeof(uint64_cu), cudaMemcpyHostToDevice));
+
 				// retreive lambda and loc:
 				if (!min_set) {
-					run_minima << <1, 1 >> > ( 0, d_a[dev], d_b[dev], d_c[dev], d_jobs[dev], d_lambda_loc[dev], d_lambda_last[dev] );
-
-					gpuErrchk(cudaMemcpy(h_lambda_loc, d_lambda_loc[dev], sizeof(int), cudaMemcpyDeviceToHost));
-					gpuErrchk(cudaMemcpy(h_lambda_last, d_lambda_last[dev], 16*sizeof(int), cudaMemcpyDeviceToHost));
+					run_minima << <1, 1 >> > ( 0, d_a[dev], d_b[dev], d_c[dev], d_jobs[dev], d_pouw[dev] );
+					gpuErrchk(cudaDeviceSynchronize());
+					gpuErrchk(cudaMemcpy(h_pouw, d_pouw[dev], sizeof(pouw_struct), cudaMemcpyDeviceToHost));
+					uint16_t *nid = (uint16_t*)&network_id;
+					for (int i = 0; i < 16; i++) {
+						h_pouw->lambda_last[i] ^= nid[i];
+					}
+					h_pouw->nonce = H_NONCE;
+					h_pouw->hashrate = int(hashrate);
+					h_pouw->hradj = int(pool_hashrate_all);
+					h_pouw->gpuchips = num_jobs_all;
+					h_pouw->unixts = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 					min_set = true;
-				} else {
-					gpuErrchk(cudaMemcpy(d_lambda_loc[dev], h_lambda_loc, sizeof(int), cudaMemcpyHostToDevice));
-					gpuErrchk(cudaMemcpy(d_lambda_last[dev], h_lambda_last, 16*sizeof(int), cudaMemcpyHostToDevice));
 				}
+				gpuErrchk(cudaMemcpy(d_pouw[dev], h_pouw, sizeof(pouw_struct), cudaMemcpyHostToDevice));
 
-				// init states:
 				h_state_hash[0] = 0xffffffffffffffff;
 				gpuErrchk(cudaMemcpy(d_state_hash[dev], h_state_hash, sizeof(uint64_cu), cudaMemcpyHostToDevice));
 				h_state_diff[0] = 0;
 				gpuErrchk(cudaMemcpy(d_state_diff[dev], h_state_diff, sizeof(uint64_cu), cudaMemcpyHostToDevice));
 
 				gpuErrchk(cudaEventRecord(start[dev]));
-				run_DynexChipUpperBound << <numBlocks[dev], threadsPerBlock[dev] >> > (dev, n, m, max_adj_size, d_solved[dev], d_lambda_solution[dev], d_total_steps[dev], false, steps_per_run, CHIP_FROM[dev], CHIP_TO[dev], d_jobs[dev], d_a[dev], d_b[dev], d_c[dev], d_adj_opp[dev], d_adj_opp_sizes[dev], d_lambda_loc[dev], d_state_hash[dev], d_state_nonce[dev], d_lambda_last[dev], d_lambda_threadi[dev], d_state_diff[dev]);
-			}
-		}
-		for (int dev = 0; dev < nDevices; dev++) {
-			if (use_multi_gpu) device_id = dev;
-			// only not disabled gpus:
-			if (std::find(disabled_gpus.begin(), disabled_gpus.end(), device_id) == disabled_gpus.end()) {
-				gpuErrchk(cudaSetDevice(device_id));
-				gpuErrchk(cudaDeviceSynchronize());
-				gpuErrchk(cudaEventRecord(stop[dev]));
+				run_DynexChipUpperBound << <numBlocks[dev], threadsPerBlock[dev] >> > (dev, n, m, max_adj_size, d_solved[dev], d_lambda_solution[dev], d_total_steps[dev], false, steps_per_run, CHIP_FROM[dev], CHIP_TO[dev], d_jobs[dev], d_a[dev], d_b[dev], d_c[dev], d_adj_opp[dev], d_adj_opp_sizes[dev], d_state_hash[dev], d_state_nonce[dev], d_pouw[dev], d_lambda_threadi[dev], d_state_diff[dev]);
 			}
 		}
 	}
@@ -2713,12 +2806,15 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		if (!testing) {
 			/// MALLOB: update_job_atomic -> let mallob know that we are working ++++++++++++++++++++++++++++++++++++++++++++++
 			std::vector<std::string> p5;
-			p5.push_back("network_id=" + MALLOB_NETWORK_ID);
-			p5.push_back("atomic_status=" + std::to_string(ATOMIC_STATUS_FINISHED_SOLVED));
-			p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
-			p5.push_back("steps=" + std::to_string(h_total_steps_all));
+			//network_id, atomic_status, steps_per_run, steps, hr, hr_adj
+			p5.push_back(MALLOB_NETWORK_ID);
+			p5.push_back(std::to_string(ATOMIC_STATUS_FINISHED_SOLVED));
+			p5.push_back(std::to_string(steps_per_run));
+			p5.push_back(std::to_string(h_total_steps_all));
+			p5.push_back(std::to_string(0));
+			p5.push_back(std::to_string(0));
 			jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
-			if (!o5.get<jsonxx::Boolean>("result")) {
+			if (!o5.get<jsonxx::Boolean>("updated")) {
 				LogTS << TEXT_RED << "[ERROR] ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
 				return false;
 			}
@@ -2756,12 +2852,15 @@ bool run_dynexsolve(int start_from_job, int maximum_jobs, int steps_per_batch, i
 		/// MALLOB: update_job_atomic -> let mallob know that we are working ++++++++++++++++++++++++++++++++++++++++++++++
 		if (!testing) {
 			std::vector<std::string> p5;
-			p5.push_back("network_id=" + MALLOB_NETWORK_ID);
-			p5.push_back("atomic_status=" + std::to_string(ATOMIC_STATUS_FINISHED_UNKNOWN));
-			p5.push_back("steps_per_run=" + std::to_string(steps_per_run));
-			p5.push_back("steps=" + std::to_string(h_total_steps_all));
+			//network_id, atomic_status, steps_per_run, steps, hr, hr_adj
+			p5.push_back(MALLOB_NETWORK_ID);
+			p5.push_back(std::to_string(ATOMIC_STATUS_FINISHED_UNKNOWN));
+			p5.push_back(std::to_string(steps_per_run));
+			p5.push_back(std::to_string(h_total_steps_all));
+			p5.push_back(std::to_string(0));
+			p5.push_back(std::to_string(0));
 			jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
-			if (!o5.get<jsonxx::Boolean>("status")) {
+			if (!o5.get<jsonxx::Boolean>("updated")) {
 				LogTS << TEXT_RED << "[ERROR] ATOMIC JOB NOT EXISTING OR EXPIRED" << TEXT_DEFAULT << std::endl;
 				return false;
 			}
@@ -2812,24 +2911,28 @@ bool cmdOptionExists(char** begin, char** end, const std::string& option)
 void signalHandler( int signum ) {
 	LogTS << " CTRL+C Interrupt signal (" << signum << ") received. Quitting gracefully..." << std::endl;
 
-	// stop miners:
-	dynexchip.dynex_quit_flag = true; // stop signal to GPU job manager and CPU jobs
-	dynexservice.dynex_hasher_quit_flag = true; // stop signal to Dynex hasher service
-
 	// update mallob that we interruped:
 	if (MALLOB_ACTIVE) {
 		/// MALLOB: update_job_atomic -> let mallob know that we are working ++++++++++++++++++++++++++++++++++++++++++++++
 		std::vector<std::string> p5;
-		p5.push_back("network_id="+MALLOB_NETWORK_ID);
-		p5.push_back("atomic_status="+std::to_string(ATOMIC_STATUS_INTERRUPTED));
+		//network_id, atomic_status, steps_per_run, steps, hr, hr_adj
+		p5.push_back(MALLOB_NETWORK_ID);
+		p5.push_back(std::to_string(ATOMIC_STATUS_INTERRUPTED));
+		p5.push_back(std::to_string(0));
+		p5.push_back(std::to_string(0));
+		p5.push_back(std::to_string(0));
+		p5.push_back(std::to_string(0));
 		jsonxx::Object o5 = mallob_mpi_command("update_atomic", p5, 60);
-		if (o5.get<jsonxx::Boolean>("status")) {
+		if (o5.get<jsonxx::Boolean>("updated")) {
 			LogTS << TEXT_SILVER << "[INFO] MALLOB: ATOMIC JOB UPDATED" << TEXT_DEFAULT << std::endl;
 		}
 	/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 	}
 
-   LogTS << TEXT_SILVER << "[INFO] FINISHING UP WORK ON GPU..." << TEXT_DEFAULT << std::endl; fflush(stdout);
+	// stop miners:
+	if (!SKIP) dynexchip.dynex_quit_flag = true; // stop signal to GPU job manager and CPU jobs
+	if (!SKIP) dynexservice.dynex_hasher_quit_flag = true; // stop signal to Dynex hasher service
+    if (!SKIP) LogTS << TEXT_SILVER << "[INFO] FINISHING UP WORK ON GPU..." << TEXT_DEFAULT << std::endl; fflush(stdout);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2838,7 +2941,6 @@ void signalHandler( int signum ) {
 int main(int argc, char** argv) {
 
 	curl_global_init(CURL_GLOBAL_DEFAULT);
-
 
 	LogTS << "[INFO] ---------------------------------------------------------" << std::endl;
 	LogTS << TEXT_SILVER << "[INFO] DynexSolve v" << VERSION << "(" << REVISION << ") | Meaningful Mining " << TEXT_DEFAULT << std::endl;
@@ -2882,7 +2984,7 @@ int main(int argc, char** argv) {
 		std::cout << "-zeta <DOUBLE>                   set zeta value of ODE" << std::endl;
 		std::cout << "-init_dt <DOUBLE>                set initial dt value of ODE" << std::endl;
 		std::cout << "-stats <FILENAME>                save stats in json format to file" << std::endl;
-		std::cout << "-adj <DOUBLE>                    adjust used mem amount (default: " << ADJ << ")" << std::endl;
+		std::cout << "-adj <DOUBLE,DOUBLE,DOUBLE>      adjust used mem amount per GPU (default: " << ADJ_DEFAULT << ")" << std::endl;
 		std::cout << "-sync                            use cuda streams sync (reduce cpu usage)" << std::endl;
 		std::cout << "-skip                            skip GPU state (.BIN) save/restore" << std::endl;
 		std::cout << "-debug                           enable debugging output" << std::endl;
@@ -3086,11 +3188,17 @@ int main(int argc, char** argv) {
 		LogTS << "[INFO] OPTION init_dt SET TO " << init_dt << std::endl;
 	}
 
+	std::vector<std::string>adj_gpu;
 	char* da = getCmdOption(argv, argv + argc, "-adj");
 	if (da) {
-		ADJ = atof(da);
-		if (ADJ < 0.8) ADJ = 0.8;
-		LogTS << "[INFO] OPTION adjust SET TO " << ADJ << std::endl;
+		adj_gpu = split(da,',');
+	}
+	float adj_last = ADJ_DEFAULT;
+	for (int i=0; i < MAX_NUM_GPUS; i++) {
+		float adj = (i < adj_gpu.size()) ? atof(adj_gpu[i].c_str()) : adj_last;
+		if (adj < 0.8) adj = 0.8;
+		ADJ[i] = adj;
+		adj_last = adj;
 	}
 
 	//cpu_chips?
@@ -3160,14 +3268,10 @@ int main(int argc, char** argv) {
 	// single or multi gpu?:
 	cudaGetDeviceCount(&nDevices);
 	if (!use_multi_gpu) {
-		// single gpu:
-		LogTS << "[INFO] FOUND " << nDevices << " INSTALLED GPU(s)" << std::endl;
-		LogTS << TEXT_SILVER << "[INFO] USING GPU DEVICE " << device_id << TEXT_DEFAULT << std::endl;
 		nDevices = 1;
-	}
-	else {
+	} else {
 		// multi gpu:
-		LogTS << TEXT_SILVER << "[INFO] MULTI-GPU ENABLED: FOUND " << nDevices << " GPUs" << TEXT_DEFAULT << std::endl;
+		LogTS << TEXT_SILVER << "[INFO] MULTI-GPU ENABLED" << TEXT_DEFAULT << std::endl;
 		device_id = -1;
 	}
 
@@ -3238,17 +3342,18 @@ int main(int argc, char** argv) {
 			srand(dis(gen));
 		}
 
-		// Register as new worker:
+		// Register as new worker: 
 		if (!testing) {
 			std::vector<std::string> p1;
-			p1.push_back("version=" + VERSION);
-			p1.push_back("network_id="+MALLOB_NETWORK_ID);
-			p1.push_back("address="+MINING_ADDRESS+(STRATUM_PASSWORD!="" ? ":"+STRATUM_PASSWORD : ""));
+			p1.push_back(VERSION);
+			p1.push_back(MALLOB_NETWORK_ID);
+			p1.push_back(MINING_ADDRESS+(STRATUM_PASSWORD!="" ? ":"+STRATUM_PASSWORD : ""));
 			jsonxx::Object o1 = mallob_mpi_command("register", p1, 60);
-			if (o1.get<jsonxx::Boolean>("result")) {
+			if (o1.get<jsonxx::Boolean>("registered")) {
 				LogTS << TEXT_SILVER << "[MALLOB] REGISTER WORKER: SUCCESS" << TEXT_DEFAULT << std::endl;
 				if (o1.has<jsonxx::String>("network_id")) {
 					MALLOB_NETWORK_ID = o1.get<jsonxx::String>("network_id");
+					LogTS << TEXT_YELLOW << "[MALLOB] UPDATED NETWORK ID TO <" << MALLOB_NETWORK_ID << ">" << TEXT_DEFAULT << std::endl;
 				}
 				MALLOB_ACTIVE = true;
 			} else {
@@ -3256,17 +3361,7 @@ int main(int argc, char** argv) {
 				return EXIT_FAILURE;
 			}
 
-
 			// get work:
-			if (!o1.has<jsonxx::Number>("chips_available")) {
-				std::vector<std::string> p2;
-				o1 = mallob_mpi_command("get_work", p2, 60);
-				if (!o1.get<jsonxx::Boolean>("result") || !o1.has<jsonxx::Number>("chips_available")) {
-					LogTS << TEXT_RED << "[MALLOB] GET WORK FAILED" << TEXT_DEFAULT << std::endl;
-					return EXIT_FAILURE;
-				}
-			}
-
 			JOB_ID = o1.get<jsonxx::Number>("id");
 			int CHIPS_AVAILABLE = o1.get<jsonxx::Number>("chips_available");
 			int CHIPS_REQUIRED = o1.get<jsonxx::Number>("chips_required");
@@ -3296,6 +3391,8 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 
+	convert(MALLOB_NETWORK_ID.c_str(), network_id, sizeof(network_id));
+
 	// testing?
 	if (testing) JOB_FILENAME = testing_file;
 
@@ -3319,10 +3416,10 @@ int main(int argc, char** argv) {
 
 	//if (!disable_gpu && !load_cnf(argv[1])) {
 	if (!disable_gpu && !load_cnf(JOB_FILENAME.c_str())) {
+		//std::remove(JOB_FILENAME.c_str()); // delete broken file
 		return EXIT_FAILURE;
 	}
 	LogTS << "[INFO] FORMULATION LOADED" << std::endl;
-
 
 	// run CPU dynex chips
 	bool dnxret = dynexchip.start(cpu_chips, JOB_FILENAME, dmm_alpha, dmm_beta, dmm_gamma, dmm_delta, dmm_epsilon, dmm_zeta, init_dt, dynex_debugger, steps_per_batch);
