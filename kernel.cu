@@ -48,6 +48,7 @@
 #include <locale.h>
 #include "memory.h"
 #include <chrono>
+#include <string>
 
 #include <map>
 #include <vector>
@@ -658,6 +659,8 @@ bool load_cnf(const char* filename) {
 	size_t len = 0;
 	n = 0;
 	m = 0;
+	char buffer[256];
+	int i, j;
 
 	auto t1 = std::chrono::high_resolution_clock::now();
 
@@ -668,6 +671,7 @@ bool load_cnf(const char* filename) {
 	}
 	LogTS << "[INFO] LOADING FILE: " << filename << std::endl;
 
+	/*
 	while (getline(&line, &len, file) != -1) {
 		if (sscanf(line, "p cnf %u %u", &n, &m) == 2) {
 			break;
@@ -677,6 +681,17 @@ bool load_cnf(const char* filename) {
 		LogTS << "[ERROR] INVALID FORMAT" << std::endl;
 		return false;
 	}
+	*/
+
+	if (strcmp(buffer, "c") == 0) {
+		while (strcmp(buffer, "\n") != 0) {
+			fscanf(file, "%s", buffer);
+		}
+	}
+	while (strcmp(buffer, "p") != 0) {
+		fscanf(file, "%s", buffer);
+	}
+	fscanf(file, " cnf %i %i", &n, &m);
 
 	LogTS << "[INFO] VARIABLES : " << n << std::endl;
 	LogTS << "[INFO] CLAUSES   : " << m << std::endl;
@@ -689,58 +704,46 @@ bool load_cnf(const char* filename) {
 	c = (int*)calloc((size_t)m, sizeof(int));
 
 	// read CNF:
-	int res[MAX_LIT_SYSTEM+1];
 	int lit;
-	int i = -1;
-	while (getline(&line, &len, file) != -1) {
-		lit = sscanf(line, "%d %d %d %d", &res[0], &res[1], &res[2], &res[3]); // MAX_LIT_SYSTEM + 1
-		if (lit == 0) continue; // skip comments and empty lines
-		i++;
-		if (i == m) break;
-
-		// check max amount
-		if (lit > MAX_LIT_SYSTEM && res[MAX_LIT_SYSTEM] != 0) {
-			LogRTS << "[ERROR] CLAUSE " << i << " HAS " << lit << " LITERALS (" << MAX_LIT_SYSTEM << " ALLOWED)" << std::endl;
+	for (i = 0; i < m; i++) {
+		//std::cout << "\r" << log_time(); printf(" [INFO] LOADING   : %3.2lf%%", 100.0 * (i + 1) / m);
+		//fflush(stdout);
+		j = 0;
+		do {
+			fscanf(file, "%s", buffer);
+			if (strcmp(buffer, "c") == 0) {
+				continue;
+			}
+			lit = atoi(buffer);
+			cls[i * MAX_LIT_SYSTEM + j] = lit;
+			if (j == 0) a[i] = lit;
+			if (j == 1) b[i] = lit;
+			if (j == 2) c[i] = lit;
+			j++;
+		} while (strcmp(buffer, "0") != 0);
+		j--;
+		if (j > MAX_LIT_SYSTEM) {
+			printf(" [INFO] ERROR: CLAUSE %d HAS %d LITERALS (%d ALLOWED).\n", i, j, MAX_LIT_SYSTEM);
 			return false;
 		}
-
-		for (int j = lit; j > 0; j--) {
-			if (res[j-1] == 0) {
-				lit--;
-			} else if (res[j-1] > n) {
-				LogRTS << "[INFO] CLAUSE " << i << " HAS BAD LITERAL " << res[j-1] << " (" << n << " ALLOWED)" << std::endl;
-				return false;
-			}
+		if (j == 2) {
+			// add same literal to make it 3sat:
+			cls[i * MAX_LIT_SYSTEM + 2] = cls[i * MAX_LIT_SYSTEM + 1];
+			c[i] = b[i];
+			//printf(" [INFO] CLAUSE %d: CONVERTED 2SAT->3SAT: %d %d %d\n", i, cls[i*max_lits_system+0], cls[i*max_lits_system+1], cls[i*max_lits_system+2] ); 
 		}
-
-		// do not allow zero
-		if (lit == 0) {
-			LogRTS << "[INFO] CLAUSE: " << i << " HAS NO LITERALS" << std::endl;
-			continue; // return false;
+		if (j == 1) {
+			// add same literal to make it 3sat:
+			cls[i * MAX_LIT_SYSTEM + 1] = cls[i * MAX_LIT_SYSTEM + 0];
+			cls[i * MAX_LIT_SYSTEM + 2] = cls[i * MAX_LIT_SYSTEM + 0];
+			b[i] = a[i];
+			c[i] = a[i];
+			//printf(" [INFO] CLAUSE %d: CONVERTED 1SAT->3SAT: %d %d %d\n", i, cls[i*max_lits_system+0], cls[i*max_lits_system+1], cls[i*max_lits_system+2] ); 
 		}
-
-		if (debug && i % 100000 == 0) {
-			LogRTS << "[INFO] LOADING   : " << int(100.0 * (i + 1) / m) << "% " << std::flush;
-		}
-
-		for (int j = 0; j < MAX_LIT_SYSTEM; j++) {
-			if (j >= lit) res[j] = res[j-1];
-			cls[i * MAX_LIT_SYSTEM + j] = res[j];
-		}
-
-		a[i] = res[0];
-		b[i] = res[1];
-		c[i] = res[2];
 	}
 	fclose(file);
-	if (debug) {
-		LogRTS << "[INFO] LOADING   : " << int(100.0 * (i + 1) / m) << "% " << std::endl;
-	}
+	//printf("\n");
 
-	if (i + 1 != m) {
-		LogRTS << "[ERROR] UNEXPECTED END OF FILE: " << i << " (" << m << " EXPECTED)" << std::endl;
-		return false;
-	}
 
 	auto t2 = std::chrono::high_resolution_clock::now();
 	float dur = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
