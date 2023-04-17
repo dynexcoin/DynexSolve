@@ -265,8 +265,7 @@ class dynex_chip_thread_obj {
 			    res = curl_easy_perform(curl);
 			    /* Check for errors */
 			    if(res != CURLE_OK)
-			      fprintf(stderr, "c ERROR: updload failed: %s\n",
-				      curl_easy_strerror(res));
+			      fprintf(stderr, "c ERROR: updload failed: %s\n", curl_easy_strerror(res));
 			    /* always cleanup */
 			    curl_easy_cleanup(curl);
 			  }
@@ -279,7 +278,7 @@ class dynex_chip_thread_obj {
 		// work: ------------------------------------------------------------------------------------------------------------------------
 		// allocates memory, sets params and initial assignments, then starts the ode integration
 		bool dynex_work(int chip_id, int _thread_count, std::atomic<bool>& dynex_quit_flag, const char* input_file, double _dmm_alpha, double _dmm_beta, double _dmm_gamma, double _dmm_delta, double _dmm_epsilon, double _dmm_zeta, double _init_dt) {
-			//LogTS << TEXT_CYAN << "[DYNEX CHIP "<<chip_id<<"] STARTING WORK " << job_user_id << "_" << job_id << "..." << TEXT_DEFAULT << std::endl;
+			//LogTS(TEXT_CYAN) << "[DYNEX CHIP " << chip_id << "] STARTING WORK " << job_user_id << "_" << job_id << "..." << std::endl;
 			load_input_file(chip_id, input_file);
 
 			dmm_alpha = _dmm_alpha;
@@ -333,13 +332,13 @@ class dynex_chip_thread_obj {
 		    /// OUPUT SETTINGS: -------------------------------------------------------------------------
 		    
 		    if (dynex_debugger) {
-		        printf(TEXT_CYAN);
+		        //printf(TEXT_CYAN);
 		        printf("c [%d] SETTINGS:\n",chip_id);
 		        printf("c [%d] MAX STEPS       : ",chip_id); std::cout << maxsteps << std::endl;
 		        printf("c [%d] TIMEOUT         : ",chip_id); std::cout << timeout << std::endl;
 		        printf("c [%d] INITAL dt       : ",chip_id); std::cout << init_dt << std::endl;
-		        printf("c [%d] HEURISTICS      : %d\n",chip_id,heuristics);
-		        printf("c [%d] TUNE CIRCUIT    : %d\n",chip_id,tune);
+		        printf("c [%d] HEURISTICS      : %d\n",chip_id, heuristics);
+		        printf("c [%d] TUNE CIRCUIT    : %d\n",chip_id, tune);
 		        printf("c [%d] ALPHA           : ",chip_id); std::cout << dmm_alpha << std::endl; // %.17f\n",dmm_alpha);
 		        printf("c [%d] BETA            : ",chip_id); std::cout << dmm_beta << std::endl;
 		        printf("c [%d] GAMMA           : ",chip_id); std::cout << dmm_gamma << std::endl;
@@ -349,7 +348,7 @@ class dynex_chip_thread_obj {
 		        printf("c [%d] SEED            : %d\n",chip_id,seed);
 		        printf("c [%d] XL_MAX          : %.d\n",chip_id,xl_max);
 
-		        printf(TEXT_DEFAULT);
+		        //printf(TEXT_DEFAULT);
 		    }
 		    /// init thread specific ODE parameters --------------------------------------------------------
 		    /* RNG */
@@ -622,19 +621,17 @@ class dynex_chip_thread_obj {
 	                time_thread[0] = t;
 	                walltime_thread[0] = time_spent;
 	            }
-	            
+
 	            //solved? -------------------------------------------------------------------------------------------------
 	            if (loc==0) {
-	            	
-		            printf("\nc [CPU %d] T=",chip_id); std::cout << t << TEXT_YELLOW << " SOLUTION FOUND" << std::endl; 
-	                for (int i=0; i<n; i++) {
-	                    if (x[i]>0) printf("%d ",(i+1));
-	                    if (x[i]<0) printf("%d ",(i+1)*-1);
-	                }
-	                fflush(stdout);
-                    printf("\nc [CPU %d] VERIFYING...\n",chip_id); if (dynex_debugger) printf(TEXT_DEFAULT);
-                	
-                    
+                    LogTS(TEXT_BYELLOW) << "[CHIP " << chip_id << "] " << "SOLUTION FOUND." << std::endl;
+                    std::stringstream _solution;
+                    for (int i=0; i<n; i++) {
+                        _solution << (x[i] ? i+1 : (i+1)*-1) << " ";
+                    }
+                    Log(TEXT_YELLOW) << _solution.str() << std::endl;
+                    LogTS(TEXT_BYELLOW) << "[CHIP " << chip_id << "] " << "VERIFYING..." << std::endl;
+
                     bool sat = true; bool clausesat;
                     for (int i=0; i<m; i++) {
                         for (int j=0; j<clauseSizes[i]; j++) {
@@ -651,31 +648,28 @@ class dynex_chip_thread_obj {
                         }
                     }
 
-                    printf(TEXT_YELLOW);
                     if (sat)  {
-                        printf(TEXT_YELLOW); 
-                        printf("c [CPU %d] SAT (VERIFIED)\n",chip_id); 
+                        LogTS(TEXT_BGREEN) << "c [CPU " << chip_id << "] SAT (VERIFIED)" << std::endl;
                         solved = 1;
-                        LogTS << "[CHIP" << chip_id << "] " << TEXT_YELLOW << "FOUND A SOLUTION." << TEXT_DEFAULT << std::endl;
+                        LogTS(TEXT_YELLOW) << "[CHIP " << chip_id << "] " << "FOUND A SOLUTION." << std::endl;
                         //write solution to file:
                         FILE *fs = fopen(SOLUTION_FILE.c_str(), "w");
                         for (int i=0; i<n; i++) {
                             if (x[i]>=0) fprintf(fs,"%d, ",i+1);
                             if (x[i]<0) fprintf(fs,"%d, ",(i+1)*-1);
                         }
-                        fclose(fs);    
+                        fclose(fs);
                         //submit solution:
-                        upload_file(SOLUTION_FILE);
-                        printf("c [CPU %d] SOLUTION UPLOADED TO DYNEX\n",chip_id); 
+                        if (upload_file(SOLUTION_FILE)) {
+                            LogTS(TEXT_BGREEN) << "c [CPU " << chip_id << "] SOLUTION UPLOADED TO DYNEX" << std::endl;
+                        }
+
                     }
                     if (!sat) {
-                    	printf(TEXT_RED); 
-                    	printf("c [CPU %d] UNSAT (VERIFIED)\n",chip_id);
+                        LogTS(TEXT_BRED) << "c [CPU " << chip_id << "] UNSAT (VERIFIED)" << std::endl;
                     }
-                    printf(TEXT_DEFAULT);
-	                
 
-	                // update locfile:
+                    // update locfile:
                     //FILE *floc = fopen(LOC_FILE, "a");
                     //fprintf(floc,"%d;%d,%.5f;%.5f;%d;%.2f\n",chip_id, stepcounter[0], time_spent,t,global,global_energy);
                     //fclose(floc);
@@ -736,9 +730,9 @@ class dynex_chip_thread_obj {
 		state_type x(size_of_vector);
 
 		// initial conditions: ---------------------------------------------------------------------------
-		for (int i=0; i<n+m*2; i++) x[i] = initial_assignments[i]; 
+		for (int i=0; i<n+m*2; i++) x[i] = initial_assignments[i];
 		if (dynex_debugger) {
-		std::cout << TEXT_DEFAULT << "c [CPU " << node->id << "] INITIAL ASSIGNMENTS SET: "
+		std::cout << "c [CPU " << node->id << "] INITIAL ASSIGNMENTS SET: "
 		<< x[0] << " "
 		<< x[1] << " "
 		<< x[2] << " "
@@ -749,12 +743,12 @@ class dynex_chip_thread_obj {
 		<< x[7] << " "
 		<< x[8] << " "
 		<< x[9] << " "
-		<< TEXT_DEFAULT << std::endl;
+		<< std::endl;
 		fflush(stdout);
 		}
 
 		//timers: ----------------------------------------------------------------------------------------
-		t_begin_thread[0] = clock(); 
+		t_begin_thread[0] = clock();
 
     		// ODE integration: ------------------------------------------------------------------------------
     		if (dynex_debugger) printf("c [CPU %d] ADAPTIVE TIME STEP INTEGRATION...\n",node->id);
@@ -767,13 +761,13 @@ class dynex_chip_thread_obj {
         	while (solved!=1 && !dynex_quit_flag) {
         		//max steps reached?
         		if (stepcounter[0]>maxsteps) {
-        			LogTS << "[CPU " << node->id << "] MAX "<<stepcounter[0]<<" INTEGRATION STEPS REACHED - WE QUIT. " << std::endl;
+        			LogTS() << "[CPU " << node->id << "] MAX "<<stepcounter[0]<<" INTEGRATION STEPS REACHED - WE QUIT. " << std::endl;
         			return 0;
         		}
         		// status update?
-        		if (stepcounter[0] >0 && stepcounter[0] % steps_per_update == 0) { //10000
+        		if (stepcounter[0] > 0 && stepcounter[0] % steps_per_update == 0) { //10000
         			// screen update:
-        			LogTS << TEXT_CYAN << "[CPU " << node->id << "] SIMULATED TIME="<< t <<" ENERGY=" << energy_thread_min[0] << " | GLOBAL=" << global_thread[0] << TEXT_DEFAULT << std::endl;
+        			LogTS() << "[CPU " << node->id << "] SIMULATED TIME="<< t <<" ENERGY=" << energy_thread_min[0] << " | GLOBAL=" << global_thread[0] << std::endl;
         		}
 				auto dxdt = dmm_generate_dxdt(node->id, x, t);
 				
@@ -826,7 +820,7 @@ class dynex_chip_thread_obj {
 		    node.optimal = (int *) calloc((size_t) n, sizeof(int));
 
 		    //run ODE:
-		    LogTS << TEXT_CYAN << "[CPU "<<chip_id<<"] STARTING ODE INTEGRATION..." << TEXT_DEFAULT << std::endl;
+		    LogTS(TEXT_CYAN) << "[CPU "<<chip_id<<"] STARTING ODE INTEGRATION..." << std::endl;
 			int result = dmm(&node, dynex_quit_flag); // <== run ODE integration
 			// show time:
     		t_end_thread[0] = clock();
@@ -858,12 +852,13 @@ class dynex_chip_thread_obj {
 		bool load_input_file(int chip_id, const char* job_input_file) {
 			
 			int i, j;
-			char buffer[512];
-			if (dynex_debugger) LogTS << TEXT_CYAN << "[CPU "<<chip_id<<"] LOADING INPUT FILE..." << job_input_file << TEXT_DEFAULT << std::endl;
+			char buffer[512] = {0};
+			if (dynex_debugger) LogTS(TEXT_CYAN) << "[CPU "<<chip_id<<"] LOADING INPUT FILE..." << job_input_file << std::endl;
 			
 			/// load CNF header:
 			int ret;
 			FILE* file = fopen(job_input_file, "r");
+			if (!file) return false;
 			if (strcmp(buffer, "c") == 0) {
 				while (strcmp(buffer, "\n") != 0) {
 					ret = fscanf(file, "%s", buffer);
@@ -873,6 +868,7 @@ class dynex_chip_thread_obj {
 				ret = fscanf(file, "%s", buffer);
 			}
 			ret = fscanf(file, " cnf %i %i", &n, &m);
+			if (ret != 2) return false;
 
 			xl_max = xl_max * m;
 			if (xl_max <= 0) xl_max = INT_MAX;
@@ -972,19 +968,19 @@ namespace Dynex {
 			  	int 								dynex_chip_threads;
 			  	bool 								dynex_chips_running = false; 
 			  	int 								dynex_chip_state = DYNEX_STATE_OFF; 
-			  	std::atomic_bool 					dynex_quit_flag ;
+			  	//std::atomic_bool 					dynex_quit_flag ;
 
 			  	bool init() {
 			    	return true;
 			    };
 
-			    bool start(size_t threads_count, std::string _job_input_file, double dmm_alpha, double dmm_beta, double dmm_gamma, double dmm_delta, double dmm_epsilon, double dmm_zeta, double init_dt, bool _dynex_debugger, unsigned long long int steps_per_update) {
+			    bool start(size_t threads_count, std::string _job_input_file, std::atomic<bool>& dynex_quit_flag, double dmm_alpha, double dmm_beta, double dmm_gamma, double dmm_delta, double dmm_epsilon, double dmm_zeta, double init_dt, bool _dynex_debugger, unsigned long long int steps_per_update) {
 
 				if (!threads_count) return false;
 
 				//already running?
 			    	if (dynex_chips_running) {
-			    		LogTS << TEXT_CYAN << "CANNOT START DYNEX CHIPS - ALREADY RUNNING" << TEXT_DEFAULT << std::endl;
+			    		LogTS(TEXT_CYAN) << "CANNOT START DYNEX CHIPS - ALREADY RUNNING" << std::endl;
 			    		return false;
 			    	}
 			    	
@@ -993,7 +989,7 @@ namespace Dynex {
 			    	dynex_chips_running = true;
 			    	dynex_chip_state = DYNEX_STATE_IDLE;
 			    	
-			    	LogTS << TEXT_CYAN << "[CPU] STARTING " << dynex_chip_threads << " DYNEX CHIPS ON CPU " << TEXT_DEFAULT << std::endl;
+			    	LogTS(TEXT_CYAN) << "[CPU] STARTING " << dynex_chip_threads << " DYNEX CHIPS ON CPU " << std::endl;
 			    	dynex_quit_flag = false;
 			    	// start chip threads:
 			    	for (size_t i=0; i<threads_count; i++) {
@@ -1007,9 +1003,9 @@ namespace Dynex {
 
 			    bool stop() {
 			    	dynex_chips_running = false;
-			    	dynex_quit_flag = true;
+			    	//dynex_quit_flag = true;
 			    	dynex_chip_state = DYNEX_STATE_OFF;
-			    	LogTS << TEXT_CYAN << "DYNEX CHIPS STOPPED." << TEXT_DEFAULT << std::endl;
+			    	LogTS(TEXT_CYAN) << "DYNEX CHIPS STOPPED." << std::endl;
 			    	return true;
 			    };
 
