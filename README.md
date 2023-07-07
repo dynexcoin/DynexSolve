@@ -13,7 +13,7 @@ Dynex has developed a proprietary circuit design, the Dynex Neuromorphic Chip, t
 Pools are operated by independent pool operators and are there to share mining power and returns. Even if the network difficulty is high, you can still get a share of all blocks mines by a pool. These are usually based on the standard protocol Stratum which is compatible with our DynexSolve miner. Your pool operator can provide you with the right starting configuration / command line options for your environment
 
 When you run DynexSolve for the first time, you will be assigned a unique “Mallob Network ID”. This helps the network to identify and schedule the computational jobs. Mallob is short for “Malleable Load Balancer”, which is a central part of Dynex’ distributed computing management. More information is also avaiable on our website: 
-https://dynexcoin.org/get-dnx/#mining
+[https://dynexcoin.org/get-dnx/#mining](https://dynexcoin.org/get-dnx#mining)
 
 # Build from source
 The source coded provided cannot be built without the (redacted) Stratum and Mallob communication handlers. These are not relevant for studiying the functionality of the DynexSolve algorithm and are only made available to selected developers. Please also note that this repository is the reference implementation of the Dynex miner and has limited performance. It is mostly for educational purposes. If you want to mine DNX, we recommend using one of the commercial miners available.
