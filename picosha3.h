@@ -336,9 +336,7 @@ namespace picosha3 {
 
     template <size_t d_bits>
     auto get_sha3_generator() {
-        static_assert(
-          d_bits == 224 or d_bits == 256 or d_bits == 384 or d_bits == 512,
-          "SHA3 only accepts digest message length 224, 256 384 or 512 bits.");
+        static_assert((d_bits == 224 || d_bits == 256 || d_bits == 384 || d_bits == 512), "SHA3 only accepts digest message length 224, 256 384 or 512 bits.");
         constexpr auto d_bytes = bits_to_bytes(d_bits);
         constexpr auto capacity_bytes = d_bytes * 2;
         constexpr auto rate_bytes = b_bytes - capacity_bytes;
@@ -347,8 +345,7 @@ namespace picosha3 {
 
     template <size_t strength_bits, size_t d_bits>
     auto get_shake_generator() {
-        static_assert(strength_bits == 128 or strength_bits == 256,
-                      "SHAKE only accepts strength 128 or 256 bits.");
+        static_assert((strength_bits == 128 || strength_bits == 256), "SHAKE only accepts strength 128 or 256 bits.");
         constexpr auto strength_bytes = bits_to_bytes(strength_bits);
         constexpr auto capacity_bytes = strength_bytes * 2;
         constexpr auto rate_bytes = b_bytes - capacity_bytes;
